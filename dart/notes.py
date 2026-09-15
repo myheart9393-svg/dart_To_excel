@@ -145,11 +145,17 @@ def _split_heading_lines(paragraph: str) -> list[str]:
 
     ``<p>회사명 : X<br/>1. 일반사항<br/>(1) 개요<br/>본문</p>`` → ``["회사명 : X", "1. 일반사항", "(1) 개요", "본문"]``.
     제목 줄 뒤의 줄들은 하위 번호 줄(``(1)``, ``2.1``, ``가.``, ``①``, ≤ 60자)을 따로 떼고 나머지 연속 줄은 한 문단으로 합친다.
-    제목 줄이 없으면 줄들을 공백으로 이어 한 문단으로 돌려준다 (기존 동작).
+    제목 줄이 없는 문단은 **첫 줄**이 하위 번호 줄일 때만 그 줄을 떼고(``(2) 종속기업의 개요<br>당기 …``), 나머지 줄은
+    공백으로 이어 한 문단으로 돌려준다. 중간 줄은 건드리지 않는다 (목록·표 설명 오분리 방지).
     """
     lines = [ln for ln in (_clean(x) for x in paragraph.split("\n")) if ln]
     if len(lines) <= 1 or not any(_is_title_line(ln) for ln in lines):
-        return [_clean(" ".join(lines))] if lines else []
+        if not lines:
+            return []
+        if len(lines) > 1 and _is_sub_line(lines[0]):
+            # 제목 없는 문단: 첫 줄이 하위 번호 줄이면 그 줄만 subheading 으로 떼고 나머지는 한 문단 (중간 줄은 건드리지 않음)
+            return [lines[0], _clean(" ".join(lines[1:]))]
+        return [_clean(" ".join(lines))]
     out: list[str] = []
     buf: list[str] = []
     after_title = False  # 제목 줄 뒤의 줄들에만 하위 번호 줄 분리 규칙을 적용 (제목 없는 블록은 기존 동작 유지)

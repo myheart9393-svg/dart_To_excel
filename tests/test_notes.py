@@ -151,26 +151,39 @@ def test_audit_sfood(load_fixture) -> None:
     kinds = [(b.kind, b.text) for b in notes[0].blocks]
     assert ("paragraph", "제 8 기 2025년 12월 31일 현재") in kinds
     # 제목 줄 뒤의 줄들: 하위 번호 줄은 subheading, 나머지는 paragraph
-    body = [(b.kind, (b.text or "")[:12]) for b in notes[0].blocks if b.kind != "table"][3:6]
+    body = [(b.kind, (b.text or "")[:12]) for b in notes[0].blocks if b.kind != "table"][3:7]
     assert body == [
         ("subheading", "(1) 지배기업의 개요"), ("paragraph", "에쓰푸드 주식회사(이하"),
-        # "(2) 종속기업의 개요<BR/>당기 …" 는 <BR/><BR/> 뒤의 별도 문단(제목 없음)이라 기존 규칙대로 한 블록(짧아서 subheading)
-        ("subheading", "(2) 종속기업의 개요"),
+        ("subheading", "(2) 종속기업의 개요"), ("paragraph", "당기 보고기간종료일 현"),  # 제목 없는 문단도 첫 줄이 하위 번호면 분리
     ]
-    assert notes[0].blocks[6].kind == "table"
+    assert notes[0].blocks[7].kind == "table"
     assert not any("미분류" in w or "누락" in w or "제목을 찾지 못해" in w for w in warnings)
     assert _non_mixed(warnings) == []
 
 
-def test_regression_other_audits_unchanged(load_fixture) -> None:
-    """줄 단위 검출을 넣어도 리벨리온·나이키 결과(주석 수·제목)는 그대로."""
-    a = split_notes(load_fixture("notes_audit.html"), "연결", [])
-    assert [n.number for n in a] == list(range(1, 31)) and a[0].title == "일반 사항" and a[-1].title == "특수관계자거래"
-    assert sum(len(n.blocks) for n in a) == 553
-    b = split_notes(load_fixture("notes_audit_separate.html"), "단일", [])
-    assert [n.number for n in b] == list(range(1, 23)) and b[0].title == "회사의 개요" and b[-1].title == "현금흐름표"
-    c = split_notes(load_fixture("notes_annual_consolidated.html"), "연결", [])
-    assert [n.number for n in c] == list(range(1, 35)) and sum(len(n.blocks) for n in c) == 715
+def _text_signature(notes) -> int:
+    """회귀 기준: 모든 블록 텍스트를 이어붙인 길이(공백 제외). 블록이 쪼개져도 텍스트가 보존되면 같다."""
+    import re as _re
+
+    return sum(len(_re.sub(r"\s+", "", b.text or "")) for n in notes for b in n.blocks)
+
+
+@pytest.mark.parametrize(
+    "fixture, scope, count, first, last, textlen",
+    [
+        ("notes_audit.html", "연결", 30, "일반 사항", "특수관계자거래", 22725),
+        ("notes_audit_separate.html", "단일", 22, "회사의 개요", "현금흐름표", 8230),
+        ("notes_annual_consolidated.html", "연결", 34, "일반적 사항 (연결)", "보고기간후사건 (연결)", 15757),
+        ("notes_annual_separate.html", "별도", 32, "일반적 사항", "보고기간후사건", 12385),
+        ("notes_audit_sfood.html", "연결", 27, "일반사항", "영업활동에서 창출된 현금", 14747),
+    ],
+)
+def test_regression_real_fixtures(load_fixture, fixture: str, scope: str, count: int, first: str, last: str, textlen: int) -> None:
+    """회귀 기준: 주석 수 + 첫·마지막 제목 + 총 텍스트 길이(공백 제외). 블록 수는 고정하지 않는다."""
+    notes = split_notes(load_fixture(fixture), scope, [])
+    assert [n.number for n in notes] == list(range(1, count + 1))
+    assert notes[0].title == first and notes[-1].title == last
+    assert _text_signature(notes) == textlen
 
 
 # ---------- synthetic ----------
