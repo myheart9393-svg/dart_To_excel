@@ -72,7 +72,7 @@ def main() -> None:
     lines.append("")
 
     # 4. 소요시간
-    times = sorted((float(r["소요초"]), r) for r in rows if r.get("소요초"))
+    times = sorted(((float(r["소요초"]), r) for r in rows if r.get("소요초")), key=lambda t: t[0])
     if times:
         vals = [t for t, _ in times]
         lines += ["## 4. 소요시간", "",
