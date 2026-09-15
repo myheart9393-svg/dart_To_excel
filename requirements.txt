@@ -1,0 +1,7 @@
+# Streamlit Community Cloud 등 uv 없는 환경용 런타임 의존성 (pyproject.toml 과 동일)
+requests>=2.31
+beautifulsoup4>=4.12
+lxml>=5.0
+pandas>=2.2
+openpyxl>=3.1
+streamlit>=1.35
