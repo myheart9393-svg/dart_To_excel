@@ -138,6 +138,41 @@ def test_child_node_single_note(load_fixture, ele: str, number: int, title: str)
     assert _non_mixed(warnings) == []
 
 
+def test_audit_sfood(load_fixture) -> None:
+    """에쓰푸드 연결감사보고서: 주석 1 제목이 <br> 하나로 본문과 붙어 있음 → 줄 단위 검출."""
+    warnings: list[str] = []
+    debug: list[tuple[str, str]] = []
+    notes = split_notes(load_fixture("notes_audit_sfood.html"), "연결", warnings, None, debug)
+    assert [n.number for n in notes] == list(range(1, 28))
+    assert notes[0].title == "일반사항" and notes[0].source == "text"
+    assert notes[-1].title == "영업활동에서 창출된 현금"
+    assert all(n.source == "text" for n in notes)
+    # 제목 줄 뒤의 "(1) 지배기업의 개요" 는 주석 1 의 첫 하위 제목, 그 앞의 기간 표는 주석 1 앞에
+    kinds = [(b.kind, b.text) for b in notes[0].blocks]
+    assert ("paragraph", "제 8 기 2025년 12월 31일 현재") in kinds
+    # 제목 줄 뒤의 줄들: 하위 번호 줄은 subheading, 나머지는 paragraph
+    body = [(b.kind, (b.text or "")[:12]) for b in notes[0].blocks if b.kind != "table"][3:6]
+    assert body == [
+        ("subheading", "(1) 지배기업의 개요"), ("paragraph", "에쓰푸드 주식회사(이하"),
+        # "(2) 종속기업의 개요<BR/>당기 …" 는 <BR/><BR/> 뒤의 별도 문단(제목 없음)이라 기존 규칙대로 한 블록(짧아서 subheading)
+        ("subheading", "(2) 종속기업의 개요"),
+    ]
+    assert notes[0].blocks[6].kind == "table"
+    assert not any("미분류" in w or "누락" in w or "제목을 찾지 못해" in w for w in warnings)
+    assert _non_mixed(warnings) == []
+
+
+def test_regression_other_audits_unchanged(load_fixture) -> None:
+    """줄 단위 검출을 넣어도 리벨리온·나이키 결과(주석 수·제목)는 그대로."""
+    a = split_notes(load_fixture("notes_audit.html"), "연결", [])
+    assert [n.number for n in a] == list(range(1, 31)) and a[0].title == "일반 사항" and a[-1].title == "특수관계자거래"
+    assert sum(len(n.blocks) for n in a) == 553
+    b = split_notes(load_fixture("notes_audit_separate.html"), "단일", [])
+    assert [n.number for n in b] == list(range(1, 23)) and b[0].title == "회사의 개요" and b[-1].title == "현금흐름표"
+    c = split_notes(load_fixture("notes_annual_consolidated.html"), "연결", [])
+    assert [n.number for n in c] == list(range(1, 35)) and sum(len(n.blocks) for n in c) == 715
+
+
 # ---------- synthetic ----------
 
 
@@ -219,6 +254,51 @@ def test_expected_titles_mismatch() -> None:
     assert "주석 4 누락(기대 제목: 차입금)" in warnings
     assert "주석 3 초과 검출(제목: 매출채권)" in warnings
     assert not any("불일치" in w for w in warnings)  # (주1) 은 비교에서 제외
+
+
+def test_heading_after_br() -> None:
+    """<p>회사명 : X<br/>1. 일반사항<br/>(1) 개요</p> → 앞 줄은 직전 문단, 제목 줄, 뒤 줄은 새 주석 첫 블록."""
+    warnings: list[str] = []
+    debug: list[tuple[str, str]] = []
+    notes = split_notes(_load("heading_after_br.html"), "단일", warnings, None, debug)
+    assert [(n.number, n.title, n.source) for n in notes] == [(1, "일반사항", "text"), (2, "재무제표 작성기준", "text"), (3, "재고자산", "text")]
+    n1 = [(b.kind, b.text) for b in notes[0].blocks]
+    assert n1 == [
+        ("paragraph", "제 8 기 2025년 12월 31일 현재"),
+        ("paragraph", "회사명 : X"),  # 제목 줄 앞의 줄 → 직전(선두) 문단
+        ("subheading", "(1) 개요"),  # 제목 줄 뒤: 하위 번호 줄은 subheading
+        ("paragraph", "지배회사는 2018년에 설립되었습니다."),  # 그 외 줄은 paragraph
+    ]
+    # "3. 이 회사는 … 있다." 는 문장 종결로 끝나 제목 줄이 아니므로 앞 줄과 한 문단으로 남는다
+    assert [b.text for b in notes[1].blocks] == ["본문2 3. 이 회사는 기준서를 적용하고 있다."]
+    assert warnings == []
+
+
+def test_missing_first_inferred() -> None:
+    """1 없이 2..5 연속 → 선두 블록을 주석 1(inferred) 로, 붕괴 없음."""
+    warnings: list[str] = []
+    notes = split_notes(_load("missing_first.html"), "단일", warnings)
+    assert [(n.number, n.title, n.source) for n in notes] == [
+        (1, "(제목 미확인)", "inferred"), (2, "중요한 회계정책", "text"), (3, "현금및현금성자산", "text"), (4, "매출채권", "text"), (5, "재고자산", "text")
+    ]
+    kinds = [b.kind for b in notes[0].blocks]
+    assert kinds == ["paragraph", "paragraph", "paragraph", "table"]
+    assert warnings == ["주석 1 제목을 찾지 못해 2번 이전 블록을 주석 1로 배정함 — 시트 주석01 확인 필요"]
+    # expected_titles 가 있으면 1번 제목을 쓴다 (불일치 경고 없음)
+    w2: list[str] = []
+    notes2 = split_notes(_load("missing_first.html"), "단일", w2, ["1. 일반사항", "2. 중요한 회계정책", "3. 현금및현금성자산", "4. 매출채권", "5. 재고자산"])
+    assert notes2[0].title == "일반사항" and notes2[0].source == "expected"
+    assert not any("불일치" in w or "누락" in w for w in w2)
+    assert note_sheet_name(notes[0]) == "주석01_제목미확인"
+
+
+def test_only_one_note_still_collapses() -> None:
+    """연속 검출이 2개 미만이면 여전히 주석00_미분류."""
+    html = "<html><body><p>서문</p><p>2. 재고자산</p><p>본문</p></body></html>"
+    warnings: list[str] = []
+    notes = split_notes(html, "단일", warnings)
+    assert len(notes) == 1 and notes[0].number == 0
+    assert any("주석00_미분류" in w for w in warnings)
 
 
 def test_truncated_bookmarktext_warning() -> None:

@@ -127,6 +127,8 @@ def note_sheet_name(note: Note, scope_prefix: str = "") -> str:
     """
     prefix = f"{scope_prefix}주석{note.number:02d}_"
     summary = _SHEET_SUMMARY_KEEP_RE.sub("", _SHEET_SUMMARY_DROP_RE.sub("", note.title))
+    if not summary:  # 제목 전체가 괄호인 경우("(제목 미확인)") 괄호 안 내용을 살린다
+        summary = _SHEET_SUMMARY_KEEP_RE.sub("", note.title)
     room = SHEET_NAME_MAX - len(prefix)
     summary = summary[:room] if room > 0 else ""
     name = prefix + summary

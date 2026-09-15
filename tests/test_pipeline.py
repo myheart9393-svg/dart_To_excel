@@ -14,7 +14,7 @@ from dart.fetcher import DartBlockedError
 from dart.pipeline import ConversionError, _fetch_children_notes, base_date_from_statements, convert_report, extract_meta, related_reports
 
 FIX = Path(__file__).parent / "fixtures"
-ANNUAL, AUDIT, AUDIT_SEP = "20260310002820", "20260414001300", "20260911000443"
+ANNUAL, AUDIT, AUDIT_SEP, AUDIT_SFOOD = "20260310002820", "20260414001300", "20260911000443", "20260409001232"
 
 # eleId → fixture 파일 (viewer.do 는 eleId 만으로 응답을 결정한다)
 _ELE_MAP = {
@@ -26,8 +26,13 @@ _ELE_MAP = {
     (AUDIT, "4"): "notes_audit.html",
     (AUDIT_SEP, "3"): "fs_audit_separate.html",
     (AUDIT_SEP, "8"): "notes_audit_separate.html",
+    (AUDIT_SFOOD, "3"): "fs_audit_sfood.html",
+    (AUDIT_SFOOD, "4"): "notes_audit_sfood.html",
 }
-_MAIN_MAP = {ANNUAL: "main_do_annual.html", AUDIT: "main_do_audit.html", AUDIT_SEP: "main_do_audit_separate.html"}
+_MAIN_MAP = {
+    ANNUAL: "main_do_annual.html", AUDIT: "main_do_audit.html",
+    AUDIT_SEP: "main_do_audit_separate.html", AUDIT_SFOOD: "main_do_audit_sfood.html",
+}
 
 
 def _params(url: str) -> dict[str, str]:
@@ -181,6 +186,19 @@ def test_e2e_audit_separate(fake_fetch) -> None:
     assert cash[1].value == "3,20" and cash[2].value == 189584809919
     assert all(s.scope == "단일" for s in report.statements) and all(n.scope == "단일" for n in report.notes)
     assert not any("파싱 오류 가능" in w or "대차" in w for w in report.warnings)
+    assert len(fake_fetch) == 3
+
+
+def test_e2e_audit_sfood(fake_fetch) -> None:
+    """에쓰푸드 연결감사보고서: 주석 27개 분할, 대차 검증 통과, 시트 2+5+27+1."""
+    report, data, values, _ = _run(AUDIT_SFOOD)
+    assert values[-1] == 1.0
+    names = load_workbook(BytesIO(data)).sheetnames
+    assert names[:7] == ["목차", "정보", "재무상태표", "손익계산서", "포괄손익계산서", "자본변동표", "현금흐름표"]
+    assert len(names) == 2 + 5 + 27 + 1 and names[7] == "주석01_일반사항" and names[-1] == "주석_전체"
+    assert [n.number for n in report.notes] == list(range(1, 28))
+    assert report.meta["company"] == "에쓰푸드" and report.meta["base_date"] == "2025.12.31"
+    assert not any("대차" in w or "파싱 오류 가능" in w or "미분류" in w or "누락" in w for w in report.warnings)
     assert len(fake_fetch) == 3
 
 

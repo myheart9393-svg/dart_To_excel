@@ -125,10 +125,66 @@ def _is_layout_table(table: Tag) -> bool:
     return ncols <= 2
 
 
+def _is_title_line(line: str) -> bool:
+    """한 줄이 텍스트 단계 주석 제목 조건(``N. 제목``, 길이 ≤ 80, 문장 종결로 끝나지 않음)을 만족하는지."""
+    t = _clean(line)
+    m = NOTE_HEADING_RE.match(t)
+    return bool(m) and len(t) <= TITLE_MAX_LEN and not m.group(2).strip().endswith(TITLE_BAD_ENDINGS)
+
+
+# 제목 줄 뒤에서 별도 블록으로 떼는 하위 번호 줄: (1) / 2.1 / 가. / ①  (길이 ≤ 60)
+_SUB_LINE_RE = re.compile(r"^(\(\d+\)|\d{1,2}\.\d|[가-힣]\.|[①-⑳])")
+
+
+def _is_sub_line(line: str) -> bool:
+    return len(line) <= SUBHEADING_MAX_LEN and _SUB_LINE_RE.match(line) is not None
+
+
+def _split_heading_lines(paragraph: str) -> list[str]:
+    """문단 안의 줄(<br> 하나로 나뉜 줄) 중 제목 조건을 만족하는 줄이 있으면 그 앞·제목·뒤로 쪼갠다.
+
+    ``<p>회사명 : X<br/>1. 일반사항<br/>(1) 개요<br/>본문</p>`` → ``["회사명 : X", "1. 일반사항", "(1) 개요", "본문"]``.
+    제목 줄 뒤의 줄들은 하위 번호 줄(``(1)``, ``2.1``, ``가.``, ``①``, ≤ 60자)을 따로 떼고 나머지 연속 줄은 한 문단으로 합친다.
+    제목 줄이 없으면 줄들을 공백으로 이어 한 문단으로 돌려준다 (기존 동작).
+    """
+    lines = [ln for ln in (_clean(x) for x in paragraph.split("\n")) if ln]
+    if len(lines) <= 1 or not any(_is_title_line(ln) for ln in lines):
+        return [_clean(" ".join(lines))] if lines else []
+    out: list[str] = []
+    buf: list[str] = []
+    after_title = False  # 제목 줄 뒤의 줄들에만 하위 번호 줄 분리 규칙을 적용 (제목 없는 블록은 기존 동작 유지)
+
+    def flush() -> None:
+        nonlocal buf
+        if buf:
+            out.append(" ".join(buf))
+            buf = []
+
+    for ln in lines:
+        if _is_title_line(ln):
+            flush()
+            out.append(ln)
+            after_title = True
+        elif after_title and _is_sub_line(ln):
+            flush()
+            out.append(ln)
+        else:
+            buf.append(ln)
+    flush()
+    return out
+
+
 def _texts_from_inline(pieces: list[str]) -> list[str]:
-    """인라인 조각(문자열, <br> 은 "\\n")을 합쳐 빈 줄(2개 이상의 줄바꿈) 기준으로 문단을 나눈다."""
+    """인라인 조각(문자열, <br> 은 "\\n")을 합쳐 빈 줄(2개 이상의 줄바꿈) 기준으로 문단을 나눈다.
+
+    문단 안에서 <br> 하나로 붙은 줄이 주석 제목 조건을 만족하면 :func:`_split_heading_lines` 로 더 쪼갠다
+    (실측: ``<P>1. 일반사항<BR/>(1) 지배기업의 개요<BR/>본문…</P>``).
+    """
     joined = "".join(pieces)
-    return [t for t in (_clean(p) for p in _PARA_SPLIT_RE.split(joined)) if t]
+    out: list[str] = []
+    for para in _PARA_SPLIT_RE.split(joined):
+        out.extend(t for t in _split_heading_lines(para) if t)
+    return out
 
 
 def _p_block(tag: Tag) -> list[_Block]:
@@ -336,7 +392,7 @@ def _apply_expected(notes: list[Note], expected_titles: list[str], warnings: lis
             warnings.append(f"주석 {num} 초과 검출(제목: {found[num].title})")
     for num in sorted(set(found) & set(expected)):
         note = found[num]
-        if _norm_title(note.title) != _norm_title(expected[num]):
+        if note.source != "inferred" and _norm_title(note.title) != _norm_title(expected[num]):
             warnings.append(f"주석 {num} 제목 불일치: 검출 {note.title!r} / 기대 {expected[num]!r}")
         note.title = expected[num]  # 번호를 뗀 제목 (트리가 정답)
         note.source = "expected"
@@ -357,8 +413,10 @@ def split_notes(
     1. 본문을 블록(문단/표)으로 평탄화한다 (레이아웃 nb 표는 셀 내용으로 풀고, 표 안 <p> 는 세지 않는다).
     2. 제목 후보: 구조 신호(``bookmarktext``, ``p.table-group-xbrl``) → 텍스트 정규식(길이 ≤ 80,
        문장 종결로 끝나지 않음, ``<p>2.</p><p>재고자산</p>`` 분할 제목 결합) → 순차성 검증
-       (직전 +1, 하나 건너뛰면 누락 경고). 첫 주석이 1(expected_titles 가 있으면 그 최소 번호)이 아니면
-       경고 후 ``주석00_미분류`` 하나로 반환.
+       (직전 +1, 하나 건너뛰면 누락 경고). 텍스트 단계는 <br> 한 줄 단위로도 제목을 찾는다.
+       첫 주석이 1(expected_titles 가 있으면 그 최소 번호)이 아닐 때: 2..N 이 연속이면 2번 이전 블록을
+       ``Note(1, "(제목 미확인)", source="inferred")`` 로 배정하고 경고, 연속 검출이 2개 미만이면
+       ``주석00_미분류`` 하나로 반환.
     3. 블록을 현재 주석에 누적: 문단/하위제목/표. 표 직전 단위 문구는 표 unit 으로 흡수, 하위 제목은 caption.
     4. ``expected_titles`` (문서 트리의 자식 제목) 가 있으면 번호 집합·제목을 비교해 경고하고 기대 제목을 쓴다.
 
@@ -383,7 +441,15 @@ def split_notes(
     for text, reason in rejected:
         logger.debug("주석 제목 후보 탈락: %r (%s)", text, reason)
 
-    if not accepted or accepted[0].number != start + 1:
+    inferred_first = False
+    if accepted and accepted[0].number == start + 2 and len(accepted) >= 2:
+        # 1 은 없지만 2..N 이 연속: 첫 제목 이전 블록(기간 표·회사명 포함)을 주석 1 로 배정한다
+        inferred_first = True
+        first_no = start + 1
+        warnings[:] = [w for w in warnings if not w.startswith(f"주석 {first_no} 누락 (검출 순서상")]
+        warnings.append(f"주석 {first_no} 제목을 찾지 못해 {first_no + 1}번 이전 블록을 주석 {first_no}로 배정함 — 시트 주석{first_no:02d} 확인 필요")
+        accs = [_NoteAcc(first_no, "(제목 미확인)", "inferred")]
+    elif not accepted or accepted[0].number != start + 1:
         if accepted:
             warnings.append(f"첫 주석 번호가 {start + 1} 이 아님({accepted[0].number}) → 주석00_미분류 하나로 반환")
         else:
@@ -414,7 +480,7 @@ def split_notes(
         elif b.text and not b.is_section:
             acc.blocks.append(_para_block(b.text))
 
-    if accepted:
+    if accepted and not inferred_first:
         preamble, accs = accs[0], accs[1:]
         accs[0].blocks = preamble.blocks + accs[0].blocks
         accs[0].mixed_tables += preamble.mixed_tables

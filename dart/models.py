@@ -122,7 +122,8 @@ class Note:
         title: 주석 제목 (예: "우발부채와 약정사항").
         scope: 연결/별도/단일.
         blocks: 원문 순서대로의 블록 목록.
-        source: 제목 출처 ("structure" 구조 신호 | "text" 텍스트 정규식 | "expected" 트리 제목으로 대체).
+        source: 제목 출처 ("structure" 구조 신호 | "text" 텍스트 정규식 | "expected" 트리 제목으로 대체
+            | "inferred" 제목 없이 선두 블록을 배정).
     """
 
     number: int
