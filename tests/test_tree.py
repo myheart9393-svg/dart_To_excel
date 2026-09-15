@@ -146,21 +146,35 @@ def test_select_target_nodes_audit_separate_synthetic() -> None:
     assert sel["재무제표"].ele_id == "3" and sel["주석"].ele_id == "4"
 
 
-def test_select_target_nodes_excludes_and_prefers_deepest() -> None:
+def test_select_target_nodes_exact_match_and_first() -> None:
+    """정확 일치 + 후보 자격 제한: 주석 자식·부분 문자열 제목은 후보가 아니고, 중복은 문서 순서 첫 번째."""
+    fin = "III. 재무에 관한 사항"
     nodes = [
-        _node("III. 재무에 관한 사항", "17"),
-        _node("1. 요약재무정보", "18", 1),
-        _node("4. 재무제표", "60", 1),
-        _node("4. 재무제표", "61", 2, "4. 재무제표"),  # 같은 키 후보 2개 → 더 깊은 것
-        _node("5. 재무제표 주석", "66", 1),
-        _node("8. 기타 재무에 관한 사항", "103", 1),
-        _node("재무제표등의 확정", "999", 1),
+        _node(fin, "17"),
+        _node("1. 요약재무정보", "18", 1, fin),  # '재무제표' 미포함/부분 → 제외
+        _node("4. 재무제표", "21", 1, fin),
+        _node("4. 재무제표", "99", 1, fin),  # 중복 → 문서 순서 첫 번째 + 경고
+        _node("5. 재무제표 주석", "26", 1, fin),
+        _node("2. 재무제표 작성기준 및 중요한 회계정책", "28", 2, "5. 재무제표 주석"),  # 주석 자식 → 절대 후보 아님
+        _node("8. 기타 재무에 관한 사항", "76", 1, fin),
+        _node("재무제표등의 확정", "999", 1, fin),  # 정확 일치 아님 → 제외
     ]
     warnings: list[str] = []
     sel = select_target_nodes(nodes, warnings)
     assert set(sel) == {"재무제표", "주석"}
-    assert sel["재무제표"].ele_id == "61"
-    assert len(warnings) == 1 and "재무제표" in warnings[0]
+    assert sel["재무제표"].ele_id == "21" and sel["주석"].ele_id == "26"
+    assert len(warnings) == 1 and "첫 번째" in warnings[0]
+
+
+def test_select_noconsol_real(load_fixture) -> None:
+    """부산주공(20260319000808): 주석 자식 '2. 재무제표 작성기준…'(eleId 28)이 아닌 '4. 재무제표'(21) 선택."""
+    nodes = parse_doc_tree(load_fixture("main_do_annual_noconsol.html"), "20260319000808")
+    warnings: list[str] = []
+    sel = select_target_nodes(nodes, warnings)
+    assert sel["별도_재무제표"].ele_id == "21" and normalize_title(sel["별도_재무제표"].title) == "재무제표"
+    assert sel["별도_주석"].ele_id == "26"
+    assert sel["연결_재무제표"].ele_id == "19" and sel["연결_주석"].ele_id == "20"  # 빈 껍데기 여부는 pipeline 이 판정
+    assert warnings == []
 
 
 def test_describe_tree(load_fixture) -> None:

@@ -45,13 +45,8 @@ _WS_RE = re.compile(r"[\s　 ]+")
 # 정규화 후 앞의 번호 접두: "4", "III", "Ⅲ", "iv", "2-1" 등 (점은 이미 제거됨)
 _NUM_PREFIX_RE = re.compile(r"^[0-9IVXivxⅠ-Ⅻⅰ-ⅻ\-]+")
 
-EXCLUDE_TERMS: tuple[str, ...] = (
-    "재무제표등",
-    "재무에관한사항",
-    "요약재무정보",
-    "재무제표에관한사항",
-    "기타재무에관한사항",
-)
+_FIN_SECTION = "재무에관한사항"  # 정기보고서에서 재무제표 후보의 부모 절
+_ATTACH_PREFIX = "(첨부)"  # 감사보고서 첨부 노드 접두
 
 KEY_CONSOL_FS = "연결_재무제표"
 KEY_CONSOL_NOTES = "연결_주석"
@@ -190,21 +185,34 @@ def normalize_title(title: str) -> str:
 
 
 def _classify(node: DocNode) -> str | None:
-    """노드를 후보 키로 분류한다. 별도/단일 구분 전이므로 임시 키 ``_별도_*`` 를 쓴다."""
+    """노드를 후보 키로 분류한다. 별도/단일 구분 전이므로 임시 키 ``_별도_*`` 를 쓴다.
+
+    후보 자격(오매칭 방지, 실측 20260319000808): '재무에 관한 사항' 절의 직계 자식,
+    최상위 노드, ``(첨부)`` 로 시작하는 노드, 그리고 재무제표 노드의 자식 ``주석`` 만 후보다.
+    주석 노드의 자식(예: '2. 재무제표 작성기준 및 중요한 회계정책')은 절대 후보가 아니다.
+    제목은 정규화 후 **정확히** 재무제표/연결재무제표/재무제표주석/연결재무제표주석 이어야 한다
+    (번호 접두는 :func:`normalize_title` 이 제거하므로 "4. 재무제표" 는 매칭, 부분 문자열 포함은 불가).
+    """
     t = normalize_title(node.title)
-    if not t or any(term in t for term in EXCLUDE_TERMS):
+    if not t:
         return None
-    if "연결재무제표주석" in t:
-        return KEY_CONSOL_NOTES
-    if "연결재무제표" in t:
-        return KEY_CONSOL_FS
-    if "재무제표주석" in t:
-        return "_별도_주석"
-    if "재무제표" in t:
-        return "_별도_재무제표"
+    parent = normalize_title(node.parent_title or "")
     if t == "주석":
-        parent = normalize_title(node.parent_title or "")
-        return KEY_CONSOL_NOTES if "연결" in parent else "_별도_주석"
+        pcore = parent[len(_ATTACH_PREFIX):] if parent.startswith(_ATTACH_PREFIX) else parent
+        if node.depth == 0 or pcore in ("재무제표", "연결재무제표"):
+            return KEY_CONSOL_NOTES if "연결" in pcore else "_별도_주석"
+        return None
+    core = t[len(_ATTACH_PREFIX):] if t.startswith(_ATTACH_PREFIX) else t
+    if not (_FIN_SECTION in parent or node.depth == 0 or t.startswith(_ATTACH_PREFIX)):
+        return None
+    if core == "연결재무제표주석":
+        return KEY_CONSOL_NOTES
+    if core == "연결재무제표":
+        return KEY_CONSOL_FS
+    if core == "재무제표주석":
+        return "_별도_주석"
+    if core == "재무제표":
+        return "_별도_재무제표"
     return None
 
 
@@ -216,10 +224,9 @@ def select_target_nodes(nodes: list[DocNode], warnings: list[str] | None = None)
         - 연결 노드가 하나도 없으면(감사보고서 등) ``재무제표``, ``주석``.
         - 연결감사보고서(연결만 있음)는 ``연결_*`` 만 채운다.
 
-    매칭은 :func:`normalize_title` 결과의 부분 문자열로 하며, ``재무제표등``, ``재무에관한사항``,
-    ``요약재무정보``, ``재무제표에관한사항``, ``기타재무에관한사항`` 은 제외한다.
+    매칭 규칙은 :func:`_classify` 참조 (정확 일치 + 후보 자격 제한).
     제목이 그냥 ``주석`` 이면 상위 제목에 ``연결`` 이 있는지로 스코프를 정한다.
-    같은 키에 후보가 둘 이상이면 depth 가 가장 깊은 것을 택하고 ``warnings`` 에 기록한다.
+    같은 키에 후보가 둘 이상이면 문서 순서상 첫 번째를 택하고 ``warnings`` 에 기록한다.
 
     Args:
         nodes: :func:`parse_doc_tree` 결과.
@@ -247,10 +254,10 @@ def select_target_nodes(nodes: list[DocNode], warnings: list[str] | None = None)
         cands = candidates.get(tmp_key)
         if not cands:
             continue
-        chosen = max(cands, key=lambda n: n.depth)  # depth 동률이면 첫 번째
+        chosen = cands[0]  # 문서 순서상 첫 번째
         if len(cands) > 1 and warnings is not None:
             titles = ", ".join(f"{c.title!r}(depth={c.depth}, eleId={c.ele_id})" for c in cands)
-            warnings.append(f"[{final_key}] 후보 {len(cands)}개 중 depth 가 가장 깊은 {chosen.title!r} 선택: {titles}")
+            warnings.append(f"[{final_key}] 후보 {len(cands)}개 중 문서 순서상 첫 번째 {chosen.title!r} 선택: {titles}")
         result[final_key] = chosen
     return result
 

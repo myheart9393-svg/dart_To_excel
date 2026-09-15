@@ -5,8 +5,11 @@
 - 원본 HTML 은 ``batch/cache/<rcpNo>/`` 에 저장하고, 있으면 네트워크 대신 캐시를 쓴다
   (``--offline`` 이면 캐시 없을 때 실패 처리). 주입은 dart.pipeline.fetch_html monkeypatch —
   파이프라인 코드는 바꾸지 않는다.
-- 요청 간 최소 0.5초, 동시성 1. 한 건 60초 초과 시 E_TIMEOUT.
-- 재실행 시 같은 rcpNo 행은 덮어쓴다. 워크북은 --save-xlsx 일 때만 batch/xlsx/ 에 저장.
+- 문서 간 6초·노드 요청 간 1.5초·네트워크 문서 25건마다 3분 휴지, 동시성 1. 한 건 60초 초과 시 E_TIMEOUT.
+- 네트워크 오류(E_NET)가 연속 3문서면 IP 차단 추정으로 즉시 중단.
+- 재실행 시 성공 기록이 있는 rcpNo 는 건너뛴다(--redo 로 강제). 캐시가 있으면 네트워크를 쓰지 않는다.
+- --only-codes N_MISMATCH,W_OTHER : 해당 코드가 난 문서만 재실행 (--offline 과 조합).
+- 워크북은 --save-xlsx 일 때만 batch/xlsx/ 에 저장.
 """
 
 from __future__ import annotations
@@ -32,7 +35,14 @@ CACHE_DIR = Path("batch/cache")
 RESULTS_CSV = Path("batch/results.csv")
 XLSX_DIR = Path("batch/xlsx")
 TIMEOUT_SEC = 60.0
-SLEEP_BETWEEN_SEC = 0.5
+SLEEP_BETWEEN_SEC = 6.0  # 문서 간 (네트워크 사용 시)
+NODE_SLEEP_SEC = 1.5  # 같은 문서 안 노드 요청 간
+REST_EVERY_DOCS = 25  # 네트워크 문서 N건마다
+REST_SEC = 180.0  # 3분 휴지
+NET_STREAK_ABORT = 3  # 네트워크 오류 연속 문서 수 → IP 차단 추정 중단
+# IP 차단(TCP 수준)은 본문 없이 연결이 끊겨 이 예외 이름들로 나타난다 (실측 2026-09)
+NET_ERROR_MARKERS = ("RemoteDisconnected", "ConnectionError", "ConnectTimeout", "ReadTimeout",
+                     "ConnectionReset", "Max retries")
 
 FIELDS = [
     "rcpNo", "corp_name", "corp_cls", "유형", "성공여부", "예외클래스", "소요초",
@@ -43,6 +53,12 @@ FIELDS = [
 _real_fetch_html = fetcher.fetch_html
 _used_network = False  # 해당 건 처리 중 실제 네트워크를 썼는지 (sleep 판단용)
 _offline = False
+_last_net_ts = 0.0  # 노드 요청 간 1.5초 간격용
+
+
+def _has_net_error(text: str) -> bool:
+    """예외 문자열/경고에 IP 차단성 네트워크 오류 흔적이 있는지."""
+    return any(m in text for m in NET_ERROR_MARKERS)
 
 
 def _cache_path(url: str) -> Path | None:
@@ -56,14 +72,21 @@ def _cache_path(url: str) -> Path | None:
 
 
 def _cached_fetch(session, url: str) -> str:
-    """캐시가 있으면 캐시, 없으면 실제 수신 후 캐시 저장 (--offline 이면 캐시 필수)."""
-    global _used_network
+    """캐시가 있으면 캐시, 없으면 실제 수신 후 캐시 저장 (--offline 이면 캐시 필수).
+
+    실제 수신 전에는 직전 네트워크 요청과 최소 1.5초 간격을 지킨다 (DART IP 차단 예방).
+    """
+    global _used_network, _last_net_ts
     path = _cache_path(url)
     if path is not None and path.exists():
         return path.read_text(encoding="utf-8")
     if _offline:
         raise FileNotFoundError(f"캐시 없음(offline): {path}")
+    wait = NODE_SLEEP_SEC - (time.monotonic() - _last_net_ts)
+    if wait > 0:
+        time.sleep(wait)
     _used_network = True
+    _last_net_ts = time.monotonic()
     html = _real_fetch_html(session, url)
     if path is not None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -93,7 +116,9 @@ def _run_target(row: dict, save_xlsx: bool) -> dict:
                     "소요초": f"{time.perf_counter() - t0:.1f}", "경고수": 0})
         return out
     except Exception as exc:  # noqa: BLE001 - 배치는 계속 진행
-        out.update({"성공여부": "실패", "예외클래스": type(exc).__name__, "경고요약": "E_EXC",
+        net = _has_net_error(f"{type(exc).__name__}: {exc}")
+        out.update({"성공여부": "실패", "예외클래스": type(exc).__name__,
+                    "경고요약": "E_NET" if net else "E_EXC",
                     "소요초": f"{time.perf_counter() - t0:.1f}", "경고수": 0})
         out["_blocked"] = "거부" in str(exc)  # DART 차단 집계용 (CSV 에는 쓰지 않음)
         return out
@@ -111,6 +136,8 @@ def _run_target(row: dict, save_xlsx: bool) -> dict:
 
     codes = [classify_warning(w) for w in report.warnings]
     codes += derive_codes(kinds_by_scope, notes_by_scope, len(report.statements))
+    if any(_has_net_error(w) for w in report.warnings):
+        codes.append("E_NET")  # 부분 수신 실패가 네트워크 오류인 경우 (연속 차단 감지용)
     seen: list[str] = []
     for c in codes:
         if c not in seen:
@@ -141,6 +168,8 @@ def main() -> None:
     ap.add_argument("--offline", action="store_true", help="캐시만 사용 (네트워크 금지)")
     ap.add_argument("--save-xlsx", action="store_true")
     ap.add_argument("--limit", type=int, default=0, help="앞에서 N건만 (0=전체)")
+    ap.add_argument("--redo", action="store_true", help="성공 기록이 있어도 다시 처리")
+    ap.add_argument("--only-codes", default="", help="이 코드(쉼표 구분)가 난 문서만 재실행 (예: N_MISMATCH,W_OTHER)")
     args = ap.parse_args()
     _offline = args.offline
 
@@ -155,9 +184,25 @@ def main() -> None:
         for r in csv.DictReader(RESULTS_CSV.open(encoding="utf-8-sig")):
             existing[r["rcpNo"]] = r
 
+    if args.only_codes:
+        wanted = {c.strip() for c in args.only_codes.split(",") if c.strip()}
+        targets = [
+            t for t in targets
+            if t["rcept_no"] in existing
+            and wanted & set((existing[t["rcept_no"]].get("경고요약") or "").split("|"))
+        ]
+        print(f"--only-codes {sorted(wanted)}: 대상 {len(targets)}건")
+
     t_start = time.perf_counter()
     blocked = 0
+    net_streak = 0  # 네트워크 오류가 난 문서 연속 수
+    net_docs = 0  # 네트워크를 실제로 쓴 문서 수 (25건마다 휴지)
+    aborted = False
     for i, row in enumerate(targets, 1):
+        rcp = row["rcept_no"]
+        if not args.redo and existing.get(rcp, {}).get("성공여부") == "성공":
+            print(f"[{i}/{len(targets)}] {rcp} 건너뜀 (성공 기록 있음)")
+            continue
         result = _run_target(row, args.save_xlsx)
         blocked += 1 if result.pop("_blocked", False) else 0
         existing[result["rcpNo"]] = result
@@ -167,10 +212,22 @@ def main() -> None:
             w = csv.DictWriter(f, fieldnames=FIELDS)
             w.writeheader()
             w.writerows(existing.values())
-        if _used_network and i < len(targets):
-            time.sleep(SLEEP_BETWEEN_SEC)
+        net_streak = net_streak + 1 if "E_NET" in (result.get("경고요약") or "") else 0
+        if net_streak >= NET_STREAK_ABORT:
+            print(f"네트워크 오류 연속 {net_streak}문서 — IP 차단 추정, 즉시 중단합니다. "
+                  f"지금까지 결과로 batch_report.py 를 실행하세요.")
+            aborted = True
+            break
+        if _used_network:
+            net_docs += 1
+            if net_docs % REST_EVERY_DOCS == 0 and i < len(targets):
+                print(f"네트워크 문서 {net_docs}건 처리 — {REST_SEC:.0f}초 휴지")
+                time.sleep(REST_SEC)
+            elif i < len(targets):
+                time.sleep(SLEEP_BETWEEN_SEC)
 
-    print(f"완료: {len(targets)}건, 총 {time.perf_counter() - t_start:.0f}초, DART 차단 {blocked}건, 결과 {RESULTS_CSV}")
+    status = "중단(IP 차단 추정)" if aborted else "완료"
+    print(f"{status}: 처리 {i}건, 총 {time.perf_counter() - t_start:.0f}초, DART 차단 {blocked}건, 결과 {RESULTS_CSV}")
 
 
 if __name__ == "__main__":

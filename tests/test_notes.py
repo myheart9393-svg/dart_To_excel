@@ -186,6 +186,37 @@ def test_regression_real_fixtures(load_fixture, fixture: str, scope: str, count:
     assert _text_signature(notes) == textlen
 
 
+def test_branch_numbers_real(load_fixture) -> None:
+    """현대리바트(20260316001287): 14-1/14-2, 38-1/38-2 가지 번호 주석 42개가 N_GAP 없이 검출된다."""
+    nodes = parse_doc_tree(load_fixture("main_do_annual_branch.html"), "20260316001287")
+    sel = select_target_nodes(nodes)
+    expected = [c.title for c in sel["연결_주석"].children]
+    assert len(expected) == 42
+    warnings: list[str] = []
+    notes = split_notes(load_fixture("notes_annual_branch.html"), "연결", warnings, expected)
+    labels = [f"{n.number}-{n.branch}" if n.branch else str(n.number) for n in notes]
+    assert len(notes) == 42 and labels[12:16] == ["13", "14-1", "14-2", "15"]
+    assert labels[38:41] == ["38-1", "38-2", "39"]
+    assert all(n.source == "expected" for n in notes)
+    assert notes[13].title == "무형자산 (연결)" and notes[13].number == 14 and notes[13].branch == 1
+    assert _non_mixed(warnings) == []  # 누락/불일치 경고 없음
+
+
+def test_branch_coexist_with_parent() -> None:
+    """``14.`` 와 ``14-1.`` 이 함께 있으면 14 를 상위로 두고 경고."""
+    html = (
+        "<html><body>"
+        + "".join(f"<p>{n}. 주석{n}</p><p>본문</p>" for n in range(1, 14))
+        + "<p>14. 무형자산</p><p>본문14</p><p>14-1. 산업재산권</p><p>본문14-1</p><p>15. 리스</p><p>본문15</p>"
+        + "</body></html>"
+    )
+    warnings: list[str] = []
+    notes = split_notes(html, "단일", warnings)
+    labels = [f"{n.number}-{n.branch}" if n.branch else str(n.number) for n in notes]
+    assert labels[-3:] == ["14", "14-1", "15"]
+    assert any("14 를 상위로 유지" in w for w in warnings)
+
+
 # ---------- synthetic ----------
 
 

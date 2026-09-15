@@ -9,6 +9,7 @@ from __future__ import annotations
 # 코드 → 설명 (summary.md 용)
 CODE_DESCRIPTIONS: dict[str, str] = {
     "E_EXC": "예외 발생 (변환 실패 또는 부분 수신/파싱 실패)",
+    "E_NET": "네트워크 오류 (연결 끊김/타임아웃 — IP 차단 추정 신호)",
     "E_TIMEOUT": "60초 타임아웃",
     "F_NO_BS": "어느 스코프든 재무상태표 없음",
     "F_NO_STMT": "재무제표 0개",
@@ -47,6 +48,11 @@ _WARNING_RULES: list[tuple[str, str]] = [
     ("숫자 열에 문자열 값이 섞여", "W_MIXED"),
     ("열 수 불일치", "W_PAD"),
     ("정정본이 있습니다", "W_RELATED"),
+    ("RemoteDisconnected", "E_NET"),
+    ("ConnectionError", "E_NET"),
+    ("ConnectTimeout", "E_NET"),
+    ("ReadTimeout", "E_NET"),
+    ("Max retries", "E_NET"),
     ("수신/파싱 실패", "E_EXC"),
     ("요청을 거부했습니다", "E_EXC"),
 ]

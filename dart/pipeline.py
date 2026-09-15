@@ -16,7 +16,7 @@ from typing import Callable, Optional
 from dart.excel import build_workbook
 from dart.fetcher import MAIN_URL, DartBlockedError, build_session, fetch_html
 from dart.models import DocNode, Note, ParsedReport, Scope
-from dart.notes import is_note_heading, split_notes
+from dart.notes import parse_heading, split_notes
 from dart.statements import extract_statements
 from dart.tree import parse_doc_tree, parse_report_input, select_target_nodes
 
@@ -119,10 +119,26 @@ def base_date_from_statements(statements: list) -> Optional[str]:
     return None
 
 
+_TAG_STRIP_RE = re.compile(r"<[^>]+>")
+EMPTY_NODE_TEXT_LEN = 300
+
+
+def _is_empty_node(html: str) -> bool:
+    """빈 껍데기 노드 판정: ``<table>`` 이 없고 태그 제거 후 비공백 텍스트가 300자 미만.
+
+    연결재무제표를 작성하지 않는 회사의 정기보고서에서 "2. 연결재무제표" 노드가
+    수백 바이트 껍데기로 오는 실측 케이스(20260319000808) 대응. 정상 케이스이므로 경고가 아니다.
+    """
+    if "<table" in html.lower():
+        return False
+    text = _TAG_STRIP_RE.sub(" ", html)
+    return len(re.sub(r"\s+", "", text)) < EMPTY_NODE_TEXT_LEN
+
+
 def _notes_mismatch(notes: list[Note], expected_titles: list[str]) -> int:
-    """검출 번호 집합과 기대 번호 집합의 대칭 차집합 크기."""
-    expected = {h[0] for h in (is_note_heading(t) for t in expected_titles) if h}
-    found = {n.number for n in notes}
+    """검출 (번호, 가지) 집합과 기대 집합의 대칭 차집합 크기."""
+    expected = {(h[0], h[1]) for h in (parse_heading(t) for t in expected_titles) if h}
+    found = {(n.number, n.branch) for n in notes}
     return len(expected ^ found)
 
 
@@ -132,7 +148,7 @@ def _fetch_children_notes(
     """주석 자식 노드를 개별 수신해 주석 하나씩으로 파싱하고 번호순으로 합친다."""
     result: list[Note] = []
     for child in node.children:
-        heading = is_note_heading(child.title)
+        heading = parse_heading(child.title)
         local: list[str] = []
         try:
             html = fetch_html(session, child.url)
@@ -141,13 +157,13 @@ def _fetch_children_notes(
             warnings.append(f"[{scope} 주석 자식 {child.title!r}] 수신/파싱 실패: {type(exc).__name__}: {str(exc)[:200]}")
             continue
         if heading and notes:
-            chosen = next((n for n in notes if n.number == heading[0]), notes[0])
-            chosen.number, chosen.title, chosen.source = heading[0], heading[1], "expected"
+            chosen = next((n for n in notes if (n.number, n.branch) == (heading[0], heading[1])), notes[0])
+            chosen.number, chosen.branch, chosen.title, chosen.source = heading[0], heading[1], heading[2], "expected"
             result.append(chosen)
         elif notes:
             result.extend(notes)
         warnings.extend(w for w in local if "첫 주석 번호" not in w and "초과 검출" not in w and "누락" not in w)
-    return sorted(result, key=lambda n: n.number)
+    return sorted(result, key=lambda n: (n.number, n.branch or 0))
 
 
 def convert_report(
@@ -211,6 +227,9 @@ def convert_report(
         report_progress(0.20 + 0.30 * i / max(len(fs_keys), 1), f"재무제표({scope}) 수신·파싱 중…")
         try:
             html = fetch_html(session, selected[key].url)
+            if _is_empty_node(html):
+                logger.info("[%s] 빈 노드(연결 미작성 등) — 이 스코프의 재무제표 없음", key)
+                continue
             statements += extract_statements(html, scope, warnings)
         except DartBlockedError as exc:
             warnings.append(f"[{key}] {USER_MSG_BLOCKED}: {str(exc)[:200]}")
@@ -228,6 +247,9 @@ def convert_report(
         expected = [c.title for c in node.children] or None
         try:
             html = fetch_html(session, node.url)
+            if _is_empty_node(html):
+                logger.info("[%s] 빈 노드(연결 미작성 등) — 이 스코프의 주석 없음", key)
+                continue
             found = split_notes(html, scope, warnings, expected)
             if expected and _notes_mismatch(found, expected) >= 1:
                 warnings.append(f"주석 분할 불일치로 자식 노드 {len(node.children)}개 개별 수신 ({scope})")

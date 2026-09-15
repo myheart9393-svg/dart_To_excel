@@ -197,3 +197,22 @@ def test_audit_separate_statements(load_fixture) -> None:
     assert all(s.scope == "단일" and s.basis == "제목" for s in stmts)
     assert stmts[0].table.header_rows == [["과 목", "제 16(당) 기", "제 16(당) 기", "제 15(전) 기", "제 15(전) 기"]]
     assert warnings == []
+
+
+def test_cut_at_branch_first_note() -> None:
+    """주석이 ``1-1.`` 로 시작하는 문서에서도 절단이 동작한다 (가지 번호 정규식 확장 후)."""
+    html = (
+        '<html><body>'
+        '<table class="nb"><tr><td>재 무 상 태 표</td></tr><tr><td>(단위 : 원)</td></tr></table>'
+        '<table border="1"><thead><tr><th>과목</th><th>당기</th></tr></thead><tbody>'
+        '<tr><td>자산총계</td><td>100</td></tr><tr><td>부채총계</td><td>40</td></tr>'
+        '<tr><td>자본총계</td><td>60</td></tr></tbody></table>'
+        '<p>1-1. 일반사항</p>'
+        '<table border="1"><thead><tr><th>구분</th><th>당기</th></tr></thead><tbody>'
+        '<tr><td>자산총계</td><td>1</td></tr><tr><td>부채총계</td><td>1</td></tr></tbody></table>'
+        '</body></html>'
+    )
+    warnings: list[str] = []
+    stmts = extract_statements(html, "단일", warnings)
+    assert [s.kind for s in stmts] == ["재무상태표"]
+    assert len(stmts[0].table.rows) == 3  # 주석 쪽 표는 절단되어 미포함

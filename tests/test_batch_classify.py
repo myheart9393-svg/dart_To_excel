@@ -26,6 +26,8 @@ from scripts.batch_classify import CODE_DESCRIPTIONS, classify_warning, derive_c
         ("표 3: 열 수 불일치(최대 4, 최소 1)로 패딩", "W_PAD"),
         ("이 공시에 정정본이 있습니다: 2026.05.01 [기재정정] (rcpNo=1)", "W_RELATED"),
         ("[연결_주석] 수신/파싱 실패: RuntimeError: boom", "E_EXC"),
+        ("[연결_주석] 수신/파싱 실패: ConnectionError: ('Connection aborted.', RemoteDisconnected(...))", "E_NET"),
+        ("[재무제표] 수신/파싱 실패: ReadTimeout: HTTPSConnectionPool", "E_NET"),
         ("듣도 보도 못한 경고", "W_OTHER"),
     ],
 )
@@ -56,3 +58,4 @@ def test_is_normal() -> None:
     assert not is_normal(True, ["F_BALANCE"])
     assert not is_normal(False, [])
     assert not is_normal(True, ["E_TIMEOUT"])
+    assert not is_normal(True, ["E_NET"])

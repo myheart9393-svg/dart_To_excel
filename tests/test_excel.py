@@ -269,5 +269,22 @@ def test_note_column_inserted_only_without_existing() -> None:
     assert ws2.freeze_panes == "B6"
 
 
+def test_note_branch_label_and_sheet() -> None:
+    from dart.excel import note_label
+
+    n = Note(number=14, title="무형자산 (연결)", scope="연결", branch=1)  # type: ignore[arg-type]
+    assert note_label(n) == "14-1"
+    assert note_sheet_name(n, "연결") == "연결주석14-1_무형자산"
+    report = ParsedReport(notes=[_note(2, "재고자산", "단일"), n2b(14, 2), n2b(14, 1)])
+    wb = load_workbook(BytesIO(build_workbook(report)))
+    names = wb.sheetnames
+    assert names[2:5] == ["주석02_재고자산", "주석14-1_가지", "주석14-2_가지"]  # (번호, 가지) 순 정렬
+    assert wb["주석14-1_가지"]["A1"].value == "14-1. 가지"
+
+
+def n2b(num: int, br: int) -> Note:
+    return Note(number=num, title="가지", scope="단일", blocks=[NoteBlock("paragraph", text="본문")], branch=br)  # type: ignore[arg-type]
+
+
 def test_note_sheet_name_reexport() -> None:
     assert note_sheet_name(Note(1, "일반적 사항 (연결)", "연결"), "연결") == "연결주석01_일반적사항"

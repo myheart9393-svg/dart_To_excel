@@ -15,6 +15,7 @@ from dart.pipeline import ConversionError, _fetch_children_notes, base_date_from
 
 FIX = Path(__file__).parent / "fixtures"
 ANNUAL, AUDIT, AUDIT_SEP, AUDIT_SFOOD = "20260310002820", "20260414001300", "20260911000443", "20260409001232"
+NOCONSOL = "20260319000808"
 
 # eleId → fixture 파일 (viewer.do 는 eleId 만으로 응답을 결정한다)
 _ELE_MAP = {
@@ -28,10 +29,15 @@ _ELE_MAP = {
     (AUDIT_SEP, "8"): "notes_audit_separate.html",
     (AUDIT_SFOOD, "3"): "fs_audit_sfood.html",
     (AUDIT_SFOOD, "4"): "notes_audit_sfood.html",
+    (NOCONSOL, "19"): "fs_annual_noconsol_empty.html",  # 연결 미작성 → 빈 껍데기
+    (NOCONSOL, "20"): "notes_annual_noconsol_empty.html",
+    (NOCONSOL, "21"): "fs_annual_separate.html",  # 실제 노드(ele_21)는 IP 차단으로 미확보 → 삼성 별도로 대체
+    (NOCONSOL, "26"): "notes_annual_noconsol.html",
 }
 _MAIN_MAP = {
     ANNUAL: "main_do_annual.html", AUDIT: "main_do_audit.html",
     AUDIT_SEP: "main_do_audit_separate.html", AUDIT_SFOOD: "main_do_audit_sfood.html",
+    NOCONSOL: "main_do_annual_noconsol.html",
 }
 
 
@@ -200,6 +206,22 @@ def test_e2e_audit_sfood(fake_fetch) -> None:
     assert report.meta["company"] == "에쓰푸드" and report.meta["base_date"] == "2025.12.31"
     assert not any("대차" in w or "파싱 오류 가능" in w or "미분류" in w or "누락" in w for w in report.warnings)
     assert len(fake_fetch) == 3
+
+
+def test_e2e_noconsol(fake_fetch) -> None:
+    """부산주공(연결 미작성): 빈 연결 노드는 조용히 건너뛰고, 스코프는 별도 하나 → 시트 접두어 없음."""
+    report, data, values, _ = _run(NOCONSOL)
+    assert values[-1] == 1.0
+    scopes = {s.scope for s in report.statements} | {n.scope for n in report.notes}
+    assert scopes == {"별도"}
+    assert 4 <= len(report.statements) <= 5
+    names = load_workbook(BytesIO(data)).sheetnames
+    assert names[2] == "재무상태표" and not any(n.startswith(("연결", "별도")) for n in names)  # 접두어 없음
+    assert len(report.notes) >= 10
+    labels = [f"{n.number}-{n.branch}" if n.branch else str(n.number) for n in report.notes]
+    assert "8-1" in labels and "8-2" in labels  # 가지 번호 주석
+    assert not any("미분류" in w or "찾지 못했습니다" in w or "F_NO" in w for w in report.warnings)
+    assert not any("작성기준" in (s.title or "") for s in report.statements)  # 주석 자식 오선택 없음
 
 
 def test_e2e_annual_base_date(fake_fetch) -> None:

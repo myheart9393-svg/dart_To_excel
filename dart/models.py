@@ -124,6 +124,7 @@ class Note:
         blocks: 원문 순서대로의 블록 목록.
         source: 제목 출처 ("structure" 구조 신호 | "text" 텍스트 정규식 | "expected" 트리 제목으로 대체
             | "inferred" 제목 없이 선두 블록을 배정).
+        branch: 가지 번호. "14-1. 무형자산" 이면 number=14, branch=1. 일반 주석은 None.
     """
 
     number: int
@@ -131,6 +132,7 @@ class Note:
     scope: Scope
     blocks: list[NoteBlock] = field(default_factory=list)
     source: str = "text"
+    branch: Optional[int] = None
 
 
 @dataclass

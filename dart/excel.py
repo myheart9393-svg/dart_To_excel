@@ -112,11 +112,16 @@ _SHEET_SUMMARY_DROP_RE = re.compile(r"[(（][^)）]*[)）]")
 _SHEET_SUMMARY_KEEP_RE = re.compile(r"[^0-9A-Za-z가-힣]+")
 
 
+def note_label(note: Note) -> str:
+    """주석 번호 표기: ``14`` 또는 가지 번호가 있으면 ``14-1``."""
+    return f"{note.number}-{note.branch}" if note.branch else str(note.number)
+
+
 def note_sheet_name(note: Note, scope_prefix: str = "") -> str:
     """주석 시트명 ``{scope_prefix}주석{NN}_{요약}`` 을 만든다.
 
     요약은 제목에서 괄호와 그 내용(``(연결)``, ``(주1)``)·공백·특수문자를 제거한 것이며,
-    31자 제한 안에서 최대 길이로 자른다 (번호는 항상 유지).
+    31자 제한 안에서 최대 길이로 자른다 (번호는 항상 유지). 가지 번호는 ``주석14-1_무형자산`` 형태.
 
     Args:
         note: 주석.
@@ -125,7 +130,8 @@ def note_sheet_name(note: Note, scope_prefix: str = "") -> str:
     Returns:
         시트명 (금지문자 없음, 31자 이하).
     """
-    prefix = f"{scope_prefix}주석{note.number:02d}_"
+    branch = f"-{note.branch}" if note.branch else ""
+    prefix = f"{scope_prefix}주석{note.number:02d}{branch}_"
     summary = _SHEET_SUMMARY_KEEP_RE.sub("", _SHEET_SUMMARY_DROP_RE.sub("", note.title))
     if not summary:  # 제목 전체가 괄호인 경우("(제목 미확인)") 괄호 안 내용을 살린다
         summary = _SHEET_SUMMARY_KEEP_RE.sub("", note.title)
@@ -320,7 +326,7 @@ def write_note_blocks(ws: Worksheet, note: Note, start_row: int, title_fill: Opt
         다음 행 번호.
     """
     row = start_row
-    title_cell = ws.cell(row=row, column=1, value=f"{note.number}. {note.title}")
+    title_cell = ws.cell(row=row, column=1, value=f"{note_label(note)}. {note.title}")
     title_cell.font = FONT_TITLE
     if title_fill is not None:
         for c in range(1, TITLE_FILL_COLS + 1):  # 제목 행 배경은 A~H 고정
@@ -539,15 +545,16 @@ def build_workbook(report: ParsedReport, split_note_sheets: bool = True) -> byte
     for n in report.notes:
         notes_by_scope.setdefault(n.scope, []).append(n)
     scopes = sorted(notes_by_scope, key=_scope_rank)
+    note_order = lambda n: (n.number, n.branch or 0)  # noqa: E731
     for scope in scopes if split_note_sheets else []:
-        for note in sorted(notes_by_scope[scope], key=lambda n: n.number):
+        for note in sorted(notes_by_scope[scope], key=note_order):
             name = safe_sheet_name(note_sheet_name(note, prefixes.get(scope, "")), existing)
             write_note_sheet(wb, note, name)
-            entries.append((name, "주석", scope, f"{note.number}. {note.title}", len(note.blocks)))
+            entries.append((name, "주석", scope, f"{note_label(note)}. {note.title}", len(note.blocks)))
     for scope in scopes:
         prefix = prefixes.get(scope, "")
         name = safe_sheet_name(f"{prefix}주석_전체", existing)
-        write_all_notes_sheet(wb, sorted(notes_by_scope[scope], key=lambda n: n.number), name)
+        write_all_notes_sheet(wb, sorted(notes_by_scope[scope], key=note_order), name)
         entries.append((name, "주석", scope, "주석 전체", sum(len(n.blocks) for n in notes_by_scope[scope])))
 
     write_toc_sheet(wb, entries, report.warnings)
