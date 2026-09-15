@@ -1,0 +1,70 @@
+# DART → Excel Converter
+
+## 목적
+DART 보고서 URL(또는 rcpNo)을 입력하면 재무제표 4종(재무상태표·손익계산서·자본변동표·현금흐름표)과
+재무제표 주석 전체를 파싱하여, 재무제표는 표별로, 주석은 주석번호별로 **각각 별도 시트**로 나눈 .xlsx를 내려주는 Streamlit 앱.
+
+## 스택
+- Python 3.11+, 패키지 관리는 `uv` (없으면 venv + pip)
+- requests, beautifulsoup4, lxml, pandas, openpyxl, streamlit
+- playwright는 **선택적 fallback** (requests 실패 시에만). 기본 경로에서 절대 사용하지 않는다.
+
+## 구조 (변경 시 반드시 이 파일도 갱신)
+app.py                    # Streamlit UI만. 파싱 로직 넣지 않음
+dart/fetcher.py           # HTTP 세션, 헤더, 인코딩 처리, 재시도
+dart/tree.py              # main.do → 문서 트리(viewDoc 파라미터) 추출, 노드 URL 생성
+dart/tables.py            # HTML table → 2D grid (colspan/rowspan 전개), 숫자 정규화
+dart/statements.py        # 재무제표 4종 식별 및 추출
+dart/notes.py             # 주석 영역을 주석번호 단위로 분할
+dart/excel.py             # openpyxl 워크북 작성, 시트명 규칙, 스타일
+dart/pipeline.py          # 입력→fetch→tree→statements/notes→excel 오케스트레이션. app.py는 이것만 호출
+dart/models.py            # dataclass: DocNode, Statement, Note, ParsedReport
+tests/fixtures/*.html     # 실제 DART HTML 저장본 (네트워크 없이 테스트)
+tests/test_*.py
+
+## 규칙
+- 함수마다 타입힌트 + docstring. 모듈 간 의존은 models.py의 dataclass로만.
+- 네트워크 호출은 fetcher.py에만 존재. 나머지 모듈은 HTML 문자열만 받는다.
+- 새 로직을 넣을 때 반드시 fixtures 기반 pytest를 같이 추가한다.
+- 코드를 바꾸면 `uv run pytest -q`를 실행하고 결과를 보고한 뒤 다음 작업을 한다.
+- 파싱 실패는 예외로 죽이지 말고 `warnings: list[str]`에 누적해 UI에 표시한다.
+- 한 번에 하나의 Step만 구현한다. 요청하지 않은 기능은 추가하지 않는다.
+
+## [진행 보고] 양식 (모든 Step 종료 시 반드시 이 양식으로 마지막에 출력)
+이 보고는 외부 리뷰어(다른 Claude 세션)가 읽고 다음 지시를 작성하는 데 쓰인다.
+리뷰어는 저장소를 볼 수 없으므로 아래 항목은 생략 없이 채운다. 코드 전문은 붙이지 말고 요약한다.
+
+### [진행 보고] Step N — <제목>
+1. 구현 완료: 파일별 한 줄 요약 (예: dart/tree.py — fetch_doc_tree, select_target_nodes 구현)
+2. 미구현/보류: 항목과 이유
+3. 테스트: `uv run pytest -q` 출력 마지막 3줄 그대로 + 추가한 테스트 파일/케이스 이름
+4. 실행 결과 샘플: 이 Step에서 만든 함수를 실제 데이터로 돌린 출력 (최대 40줄, 시트 목록·주석 번호 리스트·경고 등)
+5. 발견한 문제/불확실한 점: 추정으로 처리한 부분, 가정한 DART 구조, 깨질 수 있는 지점
+6. 리뷰어에게 묻고 싶은 것: 설계 결정이 필요한 질문 (없으면 "없음")
+7. 변경된 인터페이스: dataclass 필드나 함수 시그니처가 마스터 프롬프트와 달라졌으면 명시
+8. 다음 Step 진행 가능 여부: 가능 / 조건부(조건 명시) / 불가(사유)
+
+## DART 도메인 지식 (필수)
+- 뷰어 진입 URL: `https://dart.fss.or.kr/dsaf001/main.do?rcpNo=<14자리>`
+- main.do의 `function makeToc()` <script> 안에 jstree 데이터가 `var nodeN = {}; nodeN['text']="제목"; nodeN['rcpNo']=..; nodeN['dcmNo']=..; nodeN['eleId']=..; nodeN['offset']=..; nodeN['length']=..; nodeN['dtd']=..;` 형태로 들어있다 (2026-09 확인). `nodeN`의 N이 트리 깊이(node1=최상위). `viewDoc(...)` 리터럴 호출은 최초 뷰어 호출 1건뿐이다.
+- 실제 본문 HTML: `https://dart.fss.or.kr/report/viewer.do?rcpNo=..&dcmNo=..&eleId=..&offset=..&length=..&dtd=dart4.xsd` (dtd는 노드 값을 그대로 쓴다. 최근 문서는 dart4.xsd)
+- **viewer.do는 eleId만으로 응답을 결정하며 offset/length는 무시한다(실측). 감사보고서는 재무제표 노드 응답에 자식 주석 노드 본문이 포함되므로 HTML 안에서 잘라야 한다.**
+- 계정과목 들여쓰기: 사업보고서(DART 편집기)는 `<td>　　현금및현금성자산</td>` 처럼 전각공백(U+3000) 반복, 감사보고서(회계법인 제출본)는 `<td>&nbsp; &nbsp;현금및현금성자산</td>` 처럼 `&nbsp; &nbsp;`(3자) 반복. padding/class 기반 들여쓰기는 없다. 빈 셀은 각각 `　`, `<br/>`.
+- 재무제표 본문 HTML 은 표별로 `class="nb"` 제목표(제목·기간·단위, 1열) + `border="1"` 본문표(`<thead>` 있음) 쌍으로 구성된다.
+- 감사보고서 본문은 `<p class="section-1">(첨부)연 결 재 무 제 표</p>` 아래 표지 nb표들 → (2열 nb 제목표 + 본문표 + "별첨 주석은 본 연결재무제표의 일부입니다." nb표) 반복 → `<p class="section-2"><a name="toc2">주석</a></p>` → `<p><span bookmarktext="1. 일반 사항">1. 일반 사항</span></p>` 순이다. 재무제표 추출은 `주석` 블록에서 절단한다.
+- 자본변동표의 `총포괄손익:`, `소유주와의 거래:` 같은 구분 행은 전체 폭 colspan 한 셀이다.
+- 주석 제목 구조 신호: 사업보고서는 `<p class="table-group-xbrl"><a name="tocN">1. 일반적 사항 (연결)</a></p>`, 감사보고서는 `<p><span bookmarktext="1. 일반 사항" id="bookmark_1">1. 일반 사항</span></p>`. `bookmarktext` 속성은 20자에서 잘릴 수 있다(내부 텍스트가 완전).
+- 사업보고서 주석 본문은 `<table class="nb">` 1×1 레이아웃 표 안의 `<p>` 들이며 문단 구분은 `<br/><br/>`. 데이터 표는 최상위 `border="1"` 또는 레이아웃 표 셀 안에 중첩. 감사보고서 주석은 `<p>`/표가 body 바로 아래 평탄. nb 표(thead 없음, 열 ≤ 2)는 레이아웃용(기간 문구, `(주1)` 각주)이다.
+- 주석 표는 텍스트·숫자 혼합 표(종속기업 목록, 주식기준보상 조건 등)가 흔하다.
+- 별도 감사보고서(예: 20260911000443 나이키코리아, 일반기업회계기준)는 `(첨부)재 무 제 표` 아래 `재 무 상 태 표`·`손 익 계 산 서`·`자 본 변 동 표`·`현 금 흐 름 표`·`주석` 자식 노드. 포괄손익계산서 없음. 주석 제목은 구조 신호 없이 `<P><BR/>1. 회사의 개요<BR/><BR/>본문…</P>` 또는 `<P>2. 중요한 회계정책</P>` 텍스트뿐이라 텍스트 정규식 단계로 검출된다. 계정과목 주석참조는 `현금및현금성자산(주석3, 20)` 형태(사업보고서는 `(주4,29)`).
+- 본문선택 `<option value="rcpNo=…&amp;dcmNo=…" title="…">날짜&nbsp;제목</option>` 에 다른 rcpNo 가 있고 title 에 `정정` 이 있으면 정정본이다.
+- meta: main.do 의 `<title>회사명/보고서명/접수일</title>` (예: `삼성전자/사업보고서/2026.03.10`). 기준일 `(2025.12)` 형태는 main.do 에 없다.
+- 최신 사업보고서는 재무제표 노드 아래 `2-1. 연결 재무상태표` 등 표별 자식 노드, 주석 노드 아래 주석번호별 자식 노드가 있다. 감사보고서는 `(첨부)연 결 재 무 제 표` 노드 아래 `주석` 자식 노드 하나이며, 재무제표 노드의 본문 범위가 주석 본문을 포함한다.
+- User-Agent(브라우저)와 Referer(main.do) 헤더가 없으면 차단되거나 빈 응답이 온다.
+- 인코딩은 응답의 <meta charset>을 우선하고, 없으면 utf-8 → euc-kr 순으로 시도.
+- 사업/분·반기보고서: "III. 재무에 관한 사항" 아래 "2. 연결재무제표 / 3. 연결재무제표 주석 / 4. 재무제표 / 5. 재무제표 주석".
+- 감사보고서: "재무제표" 노드와 "주석" 노드가 별도.
+- 제목은 글자 사이 공백이 들어간다("재 무 상 태 표"). 비교 전 공백 제거 필수.
+- 음수 표기: `(1,234)`, `-1,234`, `△1,234`. 빈 값: `-`, `` , `0`. 단위 표기: `(단위 : 원)`, `(단위: 백만원)`, `(단위: 천원)`.
+- 주석 제목 예: `1. 일반 사항`, `2. 재무제표 작성기준 및 유의적인 회계정책`, `21. 우발부채와 약정사항`.
+  하위 항목은 `2.1`, `(1)`, `가.`, `①` 등으로 시작한다 → 이들은 새 주석이 아니다.
