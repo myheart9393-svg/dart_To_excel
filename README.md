@@ -96,6 +96,28 @@ uv run pytest -q --run-network   # 실제 DART 호출 포함
 
 테스트 실행 시 `samples/annual_sample.xlsx`, `samples/audit_sample.xlsx` 가 생성됩니다.
 
+## 배치 검증 (개발용)
+
+DART 공시목록 API로 접수번호를 대량 수집해 변환기를 돌리고, 실패·경고를 코드로 분류해 파서 약점을 통계로 찾는 도구입니다. 앱과 분리되어 있습니다.
+
+1. https://opendart.fss.or.kr 에서 API 키를 발급받아 `.env` 에 `DART_API_KEY=...` 로 저장합니다 (`.env.example` 참고. 키는 커밋·로그에 남지 않습니다).
+2. 실행 순서:
+
+```bash
+uv run python scripts/batch_collect.py    # batch/targets.csv 수집 (기본 최근 18개월, seed 42)
+```
+
+```bash
+uv run python scripts/batch_run.py        # 변환 실행. 원본 HTML 을 batch/cache/ 에 저장
+```
+
+```bash
+uv run python scripts/batch_report.py     # batch/summary.md, batch/fixture_candidates.md 생성
+```
+
+파서 수정 후에는 `batch_run.py --offline` 으로 네트워크 없이 캐시로 재실행합니다.
+분류 코드 의미는 `scripts/batch_classify.py` 의 `CODE_DESCRIPTIONS` 에 있습니다. `batch/` 는 커밋되지 않습니다.
+
 ## 구조
 
 | 파일 | 역할 |

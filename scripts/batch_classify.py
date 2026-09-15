@@ -1,0 +1,114 @@
+"""배치 검증용 경고·실패 자동 분류.
+
+경고 문자열과 결과 지표를 코드로 매핑한다. 매핑되지 않는 경고는 ``W_OTHER`` (원문 보존).
+"정상" = 성공 + F_*/N_*/E_* 코드 없음 (W_* 만 허용).
+"""
+
+from __future__ import annotations
+
+# 코드 → 설명 (summary.md 용)
+CODE_DESCRIPTIONS: dict[str, str] = {
+    "E_EXC": "예외 발생 (변환 실패 또는 부분 수신/파싱 실패)",
+    "E_TIMEOUT": "60초 타임아웃",
+    "F_NO_BS": "어느 스코프든 재무상태표 없음",
+    "F_NO_STMT": "재무제표 0개",
+    "F_KIND_MISSING": "재무상태표·손익(또는 포괄손익)·현금흐름표 중 하나라도 없음",
+    "F_BALANCE": "대차 불일치 경고",
+    "F_BALANCE_NA": "대차 검증 불가",
+    "F_STMT_DUP": "같은 kind 중복 (_2 suffix)",
+    "F_STMT_CONTENT": "내용 기반 분류 사용",
+    "N_NONE": "주석 0개",
+    "N_UNSORTED": "주석00_미분류",
+    "N_INFERRED": "inferred 주석 (1번 제목 미확인)",
+    "N_GAP": "주석 번호 누락",
+    "N_FEW": "주석 5개 미만",
+    "N_MISMATCH": "expected_titles 불일치 (누락/초과/제목 불일치/자식 개별 수신)",
+    "N_TRUNC": "주석 제목 잘림 의심",
+    "W_MIXED": "숫자 열 문자열 혼입 집계 (정상, 통계만)",
+    "W_PAD": "열 수 불일치 패딩",
+    "W_RELATED": "정정본 안내",
+    "W_OTHER": "미분류 경고 (원문 보존)",
+}
+
+# (부분 문자열, 코드) — 위에서부터 첫 매칭. 순서 중요.
+_WARNING_RULES: list[tuple[str, str]] = [
+    ("파싱 오류 가능", "F_BALANCE"),
+    ("대차 검증 불가", "F_BALANCE_NA"),
+    ("suffix", "F_STMT_DUP"),
+    ("내용 기반 분류", "F_STMT_CONTENT"),
+    ("주석00_미분류", "N_UNSORTED"),
+    ("제목을 찾지 못해", "N_INFERRED"),
+    ("잘렸을 수 있음", "N_TRUNC"),
+    ("개별 수신", "N_MISMATCH"),
+    ("초과 검출", "N_MISMATCH"),
+    ("제목 불일치", "N_MISMATCH"),
+    ("누락(기대 제목", "N_MISMATCH"),
+    ("누락 (검출 순서상", "N_GAP"),
+    ("숫자 열에 문자열 값이 섞여", "W_MIXED"),
+    ("열 수 불일치", "W_PAD"),
+    ("정정본이 있습니다", "W_RELATED"),
+    ("수신/파싱 실패", "E_EXC"),
+    ("요청을 거부했습니다", "E_EXC"),
+]
+
+
+def classify_warning(warning: str) -> str:
+    """경고 문자열 하나를 코드로 매핑한다. 매핑되지 않으면 ``W_OTHER``.
+
+    Args:
+        warning: ParsedReport.warnings 의 항목.
+
+    Returns:
+        분류 코드.
+    """
+    for needle, code in _WARNING_RULES:
+        if needle in warning:
+            return code
+    return "W_OTHER"
+
+
+def derive_codes(
+    kinds_by_scope: dict[str, set[str]],
+    notes_by_scope: dict[str, list[int]],
+    statement_count: int,
+) -> list[str]:
+    """결과 지표에서 파생 코드를 계산한다 (경고 문자열과 무관한 구조적 실패).
+
+    Args:
+        kinds_by_scope: 스코프 → 재무제표 kind 집합.
+        notes_by_scope: 스코프 → 주석 번호 목록.
+        statement_count: 재무제표 수.
+
+    Returns:
+        파생 코드 목록 (중복 없음, 정렬).
+    """
+    codes: set[str] = set()
+    if statement_count == 0:
+        codes.add("F_NO_STMT")
+    for kinds in kinds_by_scope.values():
+        if "재무상태표" not in kinds:
+            codes.add("F_NO_BS")
+        has_pl = "손익계산서" in kinds or "포괄손익계산서" in kinds
+        if not ("재무상태표" in kinds and has_pl and "현금흐름표" in kinds):
+            codes.add("F_KIND_MISSING")
+    if not notes_by_scope or all(not nums for nums in notes_by_scope.values()):
+        codes.add("N_NONE")
+    for nums in notes_by_scope.values():
+        if 0 in nums:
+            codes.add("N_UNSORTED")
+        if 0 < len(nums) < 5:
+            codes.add("N_FEW")
+    return sorted(codes)
+
+
+def is_normal(success: bool, codes: list[str]) -> bool:
+    """정상 여부: 성공이면서 F_*/N_*/E_* 코드가 없다 (W_* 만 허용).
+
+    Args:
+        success: convert_report 성공 여부.
+        codes: 해당 건의 전체 코드 목록.
+
+    Returns:
+        정상이면 True.
+    """
+    return success and not any(c.startswith(("F_", "N_", "E_")) for c in codes)

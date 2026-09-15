@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+dev = ["pytest>=8.0", "python-dotenv>=1.0"]
 # 선택적 fallback. 기본 경로에서는 사용하지 않는다.
 browser = ["playwright>=1.44"]
 

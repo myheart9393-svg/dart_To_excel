@@ -9,3 +9,5 @@ venv/
 .DS_Store
 *.egg-info/
 samples/
+batch/
+.env
