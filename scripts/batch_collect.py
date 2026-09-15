@@ -23,46 +23,59 @@ LIST_URL = "https://opendart.fss.or.kr/api/list.json"
 PAGE_SLEEP_SEC = 0.3
 PAGE_COUNT = 100
 
-# (유형 라벨, pblntf_ty, pblntf_detail_ty, report_nm 필수 포함, report_nm 제외, corp_cls 또는 None)
-SpecT = tuple[str, str, str, str, str, str | None]
-
-
 def _load_api_key() -> str:
     """.env 의 DART_API_KEY 를 읽는다. 없으면 종료."""
     import os
 
-    load_dotenv()
+    load_dotenv(Path(__file__).resolve().parent.parent / ".env")
     key = os.environ.get("DART_API_KEY", "").strip()
     if not key:
         sys.exit(".env 에 DART_API_KEY 가 없습니다. .env.example 을 참고해 .env 를 만드세요.")
     return key
 
 
+def _windows(bgn: date, end: date) -> list[tuple[str, str]]:
+    """corp_code 없는 list.json 은 검색기간이 3개월로 제한되므로(실측 status=100) 90일 창으로 나눈다."""
+    out: list[tuple[str, str]] = []
+    cur = bgn
+    while cur <= end:
+        w_end = min(cur + timedelta(days=89), end)
+        out.append((cur.strftime("%Y%m%d"), w_end.strftime("%Y%m%d")))
+        cur = w_end + timedelta(days=1)
+    return out
+
+
 def _fetch_pages(
-    key: str, bgn_de: str, end_de: str, pblntf_ty: str, detail_ty: str,
+    key: str, windows: list[tuple[str, str]], detail_ty: str,
     corp_cls: str | None, max_pages: int,
 ) -> list[dict]:
-    """list.json 을 페이지 단위로 수집한다. status != "000" 이면 메시지와 함께 종료."""
+    """list.json 을 기간 창 × 페이지 단위로 수집한다. status != "000" 이면 메시지와 함께 종료.
+
+    실측(2026-09): ``pblntf_ty`` 와 ``pblntf_detail_ty`` 를 함께 주면 detail 필터가 무시되므로
+    ``pblntf_detail_ty`` 만 보낸다 (report_nm 필터가 2차 방어).
+    """
     rows: list[dict] = []
-    page = 1
-    while page <= max_pages:
-        params = {
-            "crtfc_key": key, "bgn_de": bgn_de, "end_de": end_de,
-            "pblntf_ty": pblntf_ty, "pblntf_detail_ty": detail_ty,
-            "page_no": page, "page_count": PAGE_COUNT, "sort": "date", "sort_mth": "desc",
-        }
-        if corp_cls:
-            params["corp_cls"] = corp_cls
-        data = requests.get(LIST_URL, params=params, timeout=30).json()
-        status = data.get("status")
-        if status == "013":  # 조회 결과 없음
-            break
-        if status != "000":
-            sys.exit(f"list.json 오류 status={status}: {data.get('message', '')}")
-        rows.extend(data.get("list", []))
-        if page >= int(data.get("total_page", 1)):
-            break
-        page += 1
+    for bgn_de, end_de in windows:
+        page = 1
+        while page <= max_pages:
+            params = {
+                "crtfc_key": key, "bgn_de": bgn_de, "end_de": end_de,
+                "pblntf_detail_ty": detail_ty,
+                "page_no": page, "page_count": PAGE_COUNT, "sort": "date", "sort_mth": "desc",
+            }
+            if corp_cls:
+                params["corp_cls"] = corp_cls
+            data = requests.get(LIST_URL, params=params, timeout=30).json()
+            status = data.get("status")
+            if status == "013":  # 조회 결과 없음
+                break
+            if status != "000":
+                sys.exit(f"list.json 오류 status={status}: {data.get('message', '')}")
+            rows.extend(data.get("list", []))
+            if page >= int(data.get("total_page", 1)):
+                break
+            page += 1
+            time.sleep(PAGE_SLEEP_SEC)
         time.sleep(PAGE_SLEEP_SEC)
     return rows
 
@@ -104,25 +117,25 @@ def main() -> None:
     key = _load_api_key()
     end = date.today()
     bgn = end - timedelta(days=args.months * 30)
-    bgn_de, end_de = bgn.strftime("%Y%m%d"), end.strftime("%Y%m%d")
+    windows = _windows(bgn, end)
     rng = random.Random(args.seed)
     seen_corp: set[str] = set()
 
-    specs: list[tuple[str, str, str, str, str, str | None, int]] = [
-        ("사업보고서", "A", "A001", "사업보고서", "", "Y", args.annual_y),
-        ("사업보고서", "A", "A001", "사업보고서", "", "K", args.annual_k),
-        ("사업보고서", "A", "A001", "사업보고서", "", "E", args.annual_e),
-        ("반기보고서", "A", "A002", "반기보고서", "", None, args.half),
-        ("분기보고서", "A", "A003", "분기보고서", "", None, args.quarter),
-        ("감사보고서", "F", "F001", "감사보고서", "연결", None, args.audit),
-        ("연결감사보고서", "F", "F002", "연결감사보고서", "", None, args.audit_consol),
+    specs: list[tuple[str, str, str, str, str | None, int]] = [
+        ("사업보고서", "A001", "사업보고서", "", "Y", args.annual_y),
+        ("사업보고서", "A001", "사업보고서", "", "K", args.annual_k),
+        ("사업보고서", "A001", "사업보고서", "", "E", args.annual_e),
+        ("반기보고서", "A002", "반기보고서", "", None, args.half),
+        ("분기보고서", "A003", "분기보고서", "", None, args.quarter),
+        ("감사보고서", "F001", "감사보고서", "연결", None, args.audit),
+        ("연결감사보고서", "F002", "연결감사보고서", "", None, args.audit_consol),
     ]
 
     out_rows: list[dict] = []
-    for label, ty, detail, include, exclude, cls, n in specs:
+    for label, detail, include, exclude, cls, n in specs:
         if n <= 0:
             continue
-        rows = _fetch_pages(key, bgn_de, end_de, ty, detail, cls, args.max_pages)
+        rows = _fetch_pages(key, windows, detail, cls, args.max_pages)
         picked = _sample(rows, include, exclude, n, rng, seen_corp)
         print(f"{label}({cls or '전체'}): 후보 {len(rows)}건 → 표본 {len(picked)}건")
         for r in picked:
