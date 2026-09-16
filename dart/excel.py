@@ -113,15 +113,31 @@ _SHEET_SUMMARY_KEEP_RE = re.compile(r"[^0-9A-Za-z가-힣]+")
 
 
 def note_label(note: Note) -> str:
-    """주석 번호 표기: ``14`` 또는 가지 번호가 있으면 ``14-1``."""
+    """주석 번호 표기: ``note.label`` 이 있으면 그것(``2.1``, ``19, 20``), 없으면 ``14``/``14-1``."""
+    if note.label:
+        return note.label
     return f"{note.number}-{note.branch}" if note.branch else str(note.number)
 
 
+_SHEET_LABEL_NUM_RE = re.compile(r"^(\d+)(.*)$")
+
+
+def _sheet_label(note: Note) -> str:
+    """시트명용 번호 라벨: 쉼표·공백을 하이픈/제거로 바꾸고 선두 번호를 2자리로 채운다.
+
+    ``5`` → ``05``, ``14-1`` → ``14-1``, ``2.1`` → ``02.1``, ``19, 20`` → ``19-20``.
+    """
+    lab = note_label(note).replace(",", "-").replace(" ", "")
+    m = _SHEET_LABEL_NUM_RE.match(lab)
+    return f"{int(m.group(1)):02d}{m.group(2)}" if m else lab
+
+
 def note_sheet_name(note: Note, scope_prefix: str = "") -> str:
-    """주석 시트명 ``{scope_prefix}주석{NN}_{요약}`` 을 만든다.
+    """주석 시트명 ``{scope_prefix}주석{라벨}_{요약}`` 을 만든다.
 
     요약은 제목에서 괄호와 그 내용(``(연결)``, ``(주1)``)·공백·특수문자를 제거한 것이며,
-    31자 제한 안에서 최대 길이로 자른다 (번호는 항상 유지). 가지 번호는 ``주석14-1_무형자산`` 형태.
+    31자 제한 안에서 최대 길이로 자른다 (번호는 항상 유지). 라벨은 :func:`_sheet_label`
+    (``주석14-1_무형자산``, ``주석02.1_재무제표작성기준``, ``주석19-20_영업권``).
 
     Args:
         note: 주석.
@@ -130,8 +146,7 @@ def note_sheet_name(note: Note, scope_prefix: str = "") -> str:
     Returns:
         시트명 (금지문자 없음, 31자 이하).
     """
-    branch = f"-{note.branch}" if note.branch else ""
-    prefix = f"{scope_prefix}주석{note.number:02d}{branch}_"
+    prefix = f"{scope_prefix}주석{_sheet_label(note)}_"
     summary = _SHEET_SUMMARY_KEEP_RE.sub("", _SHEET_SUMMARY_DROP_RE.sub("", note.title))
     if not summary:  # 제목 전체가 괄호인 경우("(제목 미확인)") 괄호 안 내용을 살린다
         summary = _SHEET_SUMMARY_KEEP_RE.sub("", note.title)

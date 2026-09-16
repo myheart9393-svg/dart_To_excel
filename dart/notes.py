@@ -75,6 +75,7 @@ class _NoteAcc:
     blocks: list[NoteBlock] = field(default_factory=list)
     mixed_tables: int = 0  # 숫자 열에 문자열이 섞인 표 수 (주석당 1건으로 경고 집계)
     branch: Optional[int] = None
+    label: Optional[str] = None  # 원문 번호 표기 ("2.1", "19, 20"). 0단계(트리 제목)에서만 채운다
 
 
 def _clean(text: str) -> str:
@@ -112,6 +113,46 @@ def parse_heading(text: str) -> Optional[tuple[int, Optional[int], str]]:
 def _label(number: int, branch: Optional[int]) -> str:
     """주석 번호 표기: 14 또는 14-1."""
     return f"{number}-{branch}" if branch else str(number)
+
+
+# 트리 자식 제목의 번호 표기 4형식 (실측): "14-1. 무형자산" / "2.1 재무제표 작성기준" /
+# "19, 20. 영업권 및 무형자산" / "1. 일반사항". 순서 중요 (plain 은 마지막).
+_EXPECTED_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"^\s*(\d{1,2})\s*-\s*(\d{1,2})\s*[.．]\s*(\S.*)$"), "dash"),
+    (re.compile(r"^\s*(\d{1,2})[.．](\d{1,2})\s+(\S.*)$"), "dot"),
+    (re.compile(r"^\s*(\d{1,2})((?:\s*,\s*\d{1,2})+)\s*[.．]\s*(\S.*)$"), "comma"),
+    (re.compile(r"^\s*(\d{1,2})\s*[.．]\s*(?!\d)(\S.*)$"), "plain"),
+]
+
+
+def parse_expected_heading(text: str) -> Optional[tuple[int, Optional[int], str, str]]:
+    """트리 자식 제목을 ``(번호, 가지|None, 제목, 라벨)`` 로 파싱한다. 형식이 아니면 None.
+
+    :func:`parse_heading` 보다 넓은 4형식을 받는다: ``14-1.`` (라벨 "14-1"),
+    ``2.1 제목`` (번호 2·가지 1·라벨 "2.1"), ``19, 20. 제목`` (번호 19·라벨 "19, 20"),
+    ``1. 제목`` (라벨 "1").
+
+    Args:
+        text: 문서 트리 자식 노드 제목.
+
+    Returns:
+        ``(number, branch, title, label)`` 또는 None.
+    """
+    t = _clean(text)
+    for pat, kind in _EXPECTED_PATTERNS:
+        m = pat.match(t)
+        if not m:
+            continue
+        n = int(m.group(1))
+        if kind == "dash":
+            return n, int(m.group(2)), m.group(3).strip(), f"{n}-{int(m.group(2))}"
+        if kind == "dot":
+            return n, int(m.group(2)), m.group(3).strip(), f"{n}.{int(m.group(2))}"
+        if kind == "comma":
+            nums = [n] + [int(x) for x in re.findall(r"\d{1,2}", m.group(2))]
+            return n, None, m.group(3).strip(), ", ".join(str(x) for x in nums)
+        return n, None, m.group(2).strip(), str(n)
+    return None
 
 
 def is_subheading(text: str) -> bool:
@@ -418,6 +459,106 @@ def _norm_title(title: str) -> str:
     return _WS_RE.sub("", re.sub(r"[(（][^)）]*[)）]", "", title))
 
 
+_EXACT_DROP_RE = re.compile(r"[(（][^)）]*[)）]")
+_EXACT_KEEP_RE = re.compile(r"[^0-9A-Za-z가-힣]+")
+_EXPECTED_GIVEUP_RATIO = 0.3  # 못 찾은 기대 제목이 이 비율 이상이면 0단계 포기
+
+
+def _norm_exact(text: str) -> str:
+    """0단계 정확 일치 비교용: 괄호와 그 내용을 지운 뒤 숫자·문자만 남긴다."""
+    return _EXACT_KEEP_RE.sub("", _EXACT_DROP_RE.sub("", text or ""))
+
+
+def _warn_mixed(accs: list[_NoteAcc], warnings: list[str]) -> None:
+    """숫자 열 문자열 혼입 표를 주석당 1건으로 집계해 경고 하나로 남긴다."""
+    mixed = [(a.label or _label(a.number, a.branch), a.mixed_tables) for a in accs if a.mixed_tables]
+    if mixed:
+        warnings.append(
+            f"주석 표 {sum(m for _, m in mixed)}개에서 숫자 열에 문자열 값이 섞여 원문 그대로 남김 "
+            f"(주석 {', '.join(n for n, _ in mixed)})"
+        )
+
+
+def _split_by_expected(
+    blocks: list[_Block], scope: Scope, warnings: list[str], expected_titles: list[str]
+) -> Optional[list[Note]]:
+    """0단계: 트리 자식 제목을 본문 블록과 정규화 정확 일치로 대응시켜 분할한다.
+
+    각 기대 제목을 :func:`_norm_exact` 로 정규화해 같은 정규화 텍스트를 가진 첫 번째
+    표 밖 블록을 그 주석의 제목으로 확정한다. 이 모드에서는 트리 순서가 정답이므로 번호
+    연속성 검증을 하지 않는다 (N_GAP 없음). 본문 순서가 트리 순서와 어긋나면 경고 후
+    본문 순서대로 분할한다.
+
+    Returns:
+        Note 목록. 기대 제목의 30% 이상을 못 찾았거나 파싱 가능한 기대 제목이 없으면
+        None (호출자가 기존 1~3단계로 진행).
+    """
+    parsed = [(raw, h) for raw, h in ((t, parse_expected_heading(t)) for t in expected_titles) if h]
+    if not parsed:
+        return None
+    p_blocks = [(i, _norm_exact(b.text)) for i, b in enumerate(blocks) if b.kind == "p" and b.text and not b.is_section]
+    used: set[int] = set()
+    found: list[tuple[int, tuple[int, Optional[int], str, str]]] = []
+    missing: list[tuple[int, Optional[int], str, str]] = []
+    for raw, h in parsed:
+        key = _norm_exact(raw)
+        idx = next((i for i, nt in p_blocks if nt == key and i not in used), None)
+        if idx is None:
+            missing.append(h)
+        else:
+            used.add(idx)
+            found.append((idx, h))
+    if not found or len(missing) >= _EXPECTED_GIVEUP_RATIO * len(parsed):
+        warnings.append(
+            f"트리 제목 직접 검출 실패({len(missing)}/{len(parsed)} 미발견) — 텍스트 단계로 fallback"
+        )
+        return None
+    # 첫 기대 제목만 못 찾았으면 (기존 inferred 규칙과 동일하게) 선두 블록을 그 주석으로 배정한다
+    inferred_first = parsed[0][1] if missing and missing[0] is parsed[0][1] else None
+    for h in missing:
+        if h is inferred_first:
+            continue
+        warnings.append(f"주석 {h[3]} 제목을 본문에서 찾지 못함(기대 제목: {h[2]})")
+    if any(found[k][0] < found[k - 1][0] for k in range(1, len(found))):
+        warnings.append("주석 제목의 본문 순서가 문서 트리 순서와 어긋남 — 본문 순서대로 분할")
+        found.sort(key=lambda t: t[0])
+    by_index = {i: h for i, h in found}
+    accs = [_NoteAcc(0, "미분류", "text")]  # 첫 제목 이전 블록 보관용 (뒤에서 첫 주석에 합침)
+    table_no = 0
+    for i, b in enumerate(blocks):
+        h = by_index.get(i)
+        if h is not None:
+            accs.append(_NoteAcc(h[0], h[2], "expected", branch=h[1], label=h[3]))
+            continue
+        acc = accs[-1]
+        if b.kind == "table":
+            table_no += 1
+            acc.blocks.append(_convert_table(b.tag, acc, table_no, warnings))
+        elif b.text and not b.is_section:
+            acc.blocks.append(_para_block(b.text))
+    preamble, accs = accs[0], accs[1:]
+    if inferred_first is not None and (preamble.blocks or preamble.mixed_tables):
+        h0 = inferred_first
+        preamble.number, preamble.branch, preamble.label = h0[0], h0[1], h0[3]
+        preamble.title, preamble.source = h0[2], "expected"
+        first_found = accs[0].label or _label(accs[0].number, accs[0].branch)
+        warnings.append(
+            f"주석 {h0[3]} 제목을 찾지 못해 {first_found}번 이전 블록을 주석 {h0[3]}로 배정함 — 시트 주석{h0[0]:02d} 확인 필요"
+        )
+        accs.insert(0, preamble)
+    else:
+        if inferred_first is not None:
+            warnings.append(f"주석 {inferred_first[3]} 제목을 본문에서 찾지 못함(기대 제목: {inferred_first[2]})")
+        accs[0].blocks = preamble.blocks + accs[0].blocks
+        accs[0].mixed_tables += preamble.mixed_tables
+    _warn_mixed(accs, warnings)
+    return [
+        Note(number=a.number, title=a.title, scope=scope, blocks=a.blocks, source=a.source,
+             branch=a.branch, label=a.label)
+        for a in accs
+    ]
+
+
 def _apply_expected(notes: list[Note], expected_titles: list[str], warnings: list[str]) -> None:
     expected: dict[tuple[int, Optional[int]], str] = {}
     for t in expected_titles:
@@ -454,6 +595,10 @@ def split_notes(
 ) -> list[Note]:
     """주석 본문 HTML 을 최상위 주석 번호 단위로 분할한다.
 
+    0. ``expected_titles`` 가 있으면 트리 자식 제목을 본문 블록과 정규화 정확 일치로 대응시킨다
+       (:func:`_split_by_expected`). 성공하면 트리 순서가 정답이므로 번호 연속성 검증을 하지 않고,
+       ``2.1`` / ``19, 20.`` 같은 비정형 번호도 ``Note.label`` 로 보존한다. 기대 제목의 30% 이상을
+       못 찾으면 포기하고 아래 단계로 진행한다.
     1. 본문을 블록(문단/표)으로 평탄화한다 (레이아웃 nb 표는 셀 내용으로 풀고, 표 안 <p> 는 세지 않는다).
     2. 제목 후보: 구조 신호(``bookmarktext``, ``p.table-group-xbrl``) → 텍스트 정규식(길이 ≤ 80,
        문장 종결로 끝나지 않음, ``<p>2.</p><p>재고자산</p>`` 분할 제목 결합) → 순차성 검증
@@ -475,9 +620,14 @@ def split_notes(
         번호 순서대로의 Note 목록.
     """
     blocks = _flatten_html(html)
+    if expected_titles:
+        # 0단계: 트리 자식 제목을 본문과 정확 일치로 대응 (구조 신호보다 먼저). 실패하면 기존 단계로.
+        exact = _split_by_expected(blocks, scope, warnings, expected_titles)
+        if exact is not None:
+            return exact
     cands, rejected = _title_candidates(blocks)
     # expected_titles 가 주어지면 그 최소 번호부터 시작 (자식 노드 하나만 파싱하는 fallback 에서 18번 등 허용)
-    expected_numbers = [h[0] for h in (parse_heading(t) for t in (expected_titles or [])) if h]
+    expected_numbers = [h[0] for h in (parse_expected_heading(t) for t in (expected_titles or [])) if h]
     start = min(expected_numbers) - 1 if expected_numbers else 0
     accepted = _validate_sequence(cands, warnings, rejected, start)
     if debug is not None:
@@ -529,12 +679,7 @@ def split_notes(
         accs[0].blocks = preamble.blocks + accs[0].blocks
         accs[0].mixed_tables += preamble.mixed_tables
 
-    mixed = [(_label(a.number, a.branch), a.mixed_tables) for a in accs if a.mixed_tables]
-    if mixed:
-        warnings.append(
-            f"주석 표 {sum(m for _, m in mixed)}개에서 숫자 열에 문자열 값이 섞여 원문 그대로 남김 "
-            f"(주석 {', '.join(n for n, _ in mixed)})"
-        )
+    _warn_mixed(accs, warnings)
     notes = [
         Note(number=a.number, title=a.title, scope=scope, blocks=a.blocks, source=a.source, branch=a.branch)
         for a in accs

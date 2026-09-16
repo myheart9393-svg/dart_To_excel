@@ -16,7 +16,7 @@ from typing import Callable, Optional
 from dart.excel import build_workbook
 from dart.fetcher import MAIN_URL, DartBlockedError, build_session, fetch_html
 from dart.models import DocNode, Note, ParsedReport, Scope
-from dart.notes import parse_heading, split_notes
+from dart.notes import parse_expected_heading, split_notes
 from dart.statements import extract_statements
 from dart.tree import parse_doc_tree, parse_report_input, select_target_nodes
 
@@ -137,7 +137,7 @@ def _is_empty_node(html: str) -> bool:
 
 def _notes_mismatch(notes: list[Note], expected_titles: list[str]) -> int:
     """검출 (번호, 가지) 집합과 기대 집합의 대칭 차집합 크기."""
-    expected = {(h[0], h[1]) for h in (parse_heading(t) for t in expected_titles) if h}
+    expected = {(h[0], h[1]) for h in (parse_expected_heading(t) for t in expected_titles) if h}
     found = {(n.number, n.branch) for n in notes}
     return len(expected ^ found)
 
@@ -148,7 +148,7 @@ def _fetch_children_notes(
     """주석 자식 노드를 개별 수신해 주석 하나씩으로 파싱하고 번호순으로 합친다."""
     result: list[Note] = []
     for child in node.children:
-        heading = parse_heading(child.title)
+        heading = parse_expected_heading(child.title)
         local: list[str] = []
         try:
             html = fetch_html(session, child.url)
@@ -159,10 +159,15 @@ def _fetch_children_notes(
         if heading and notes:
             chosen = next((n for n in notes if (n.number, n.branch) == (heading[0], heading[1])), notes[0])
             chosen.number, chosen.branch, chosen.title, chosen.source = heading[0], heading[1], heading[2], "expected"
+            chosen.label = heading[3]
             result.append(chosen)
         elif notes:
             result.extend(notes)
-        warnings.extend(w for w in local if "첫 주석 번호" not in w and "초과 검출" not in w and "누락" not in w)
+        warnings.extend(
+            w for w in local
+            if "첫 주석 번호" not in w and "초과 검출" not in w and "누락" not in w
+            and "직접 검출 실패" not in w and "본문에서 찾지 못함" not in w
+        )
     return sorted(result, key=lambda n: (n.number, n.branch or 0))
 
 

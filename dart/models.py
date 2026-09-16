@@ -125,6 +125,7 @@ class Note:
         source: 제목 출처 ("structure" 구조 신호 | "text" 텍스트 정규식 | "expected" 트리 제목으로 대체
             | "inferred" 제목 없이 선두 블록을 배정).
         branch: 가지 번호. "14-1. 무형자산" 이면 number=14, branch=1. 일반 주석은 None.
+        label: 원문 번호 표기 ("2.1", "19, 20", "14-1"). None 이면 number/branch 로 계산한다.
     """
 
     number: int
@@ -133,6 +134,7 @@ class Note:
     blocks: list[NoteBlock] = field(default_factory=list)
     source: str = "text"
     branch: Optional[int] = None
+    label: Optional[str] = None
 
 
 @dataclass

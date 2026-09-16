@@ -230,10 +230,25 @@ def merge_split_statement(a: Statement, b: Statement) -> Statement:
 
 _NAME_NORM_RE = re.compile(r"[(（][^)）]*[)）]")
 _TOTAL_LE_KEYS = ("부채와자본총계", "부채및자본총계", "자본과부채총계", "부채와자본의총계")
+# XBRL 표준계정명 문서(예: 20260316001287 현대리바트)는 총계 행이 "자산"/"부채"/"자본"/"자본과 부채".
+_FALLBACK_LE_KEYS = ("자본과부채", "부채와자본", "부채및자본")
 
 
 def _norm_account(name: object) -> str:
     return _WS_RE.sub("", _NAME_NORM_RE.sub("", str(name or "")))
+
+
+def _fallback_total_rows(stmt: Statement) -> dict[str, list]:
+    """XBRL 표준계정명 fallback 행: 이름이 정확히 자산/부채/자본/자본과부채류이고 숫자 값이 하나 이상인 행.
+
+    헤더성 ``자산`` 행은 값이 없어 제외된다. 같은 이름이 여러 번이면 마지막 것 (총계는 맨 끝에 온다).
+    """
+    out: dict[str, list] = {}
+    for r in stmt.table.rows:
+        key = _norm_account(r[0] if r else "")
+        if key in ("자산", "부채", "자본", *_FALLBACK_LE_KEYS) and any(isinstance(v, float) for v in r[1:]):
+            out[key] = r
+    return out
 
 
 def validate_balance_sheet(stmt: Statement, warnings: list[str]) -> None:
@@ -241,6 +256,8 @@ def validate_balance_sheet(stmt: Statement, warnings: list[str]) -> None:
 
     계정과목은 공백·괄호내용을 제거해 비교한다. 차이가 ``max(1, 자산총계×1e-6)`` 를 넘으면
     "파싱 오류 가능" 경고, 필요한 행을 못 찾으면 "대차 검증 불가" 경고를 ``warnings`` 에 남긴다.
+    ``~총계`` 행이 없으면 XBRL 표준계정명(``자산``/``부채``/``자본``/``자본과 부채``, 숫자 값이 있는 행)
+    으로 fallback 한다 (경고 아님, logging.info).
     주석 열(헤더 ``주석``)과 자산총계가 None 인 열은 건너뛴다. 현금흐름표는 검증하지 않는다.
 
     Args:
@@ -254,6 +271,23 @@ def validate_balance_sheet(stmt: Statement, warnings: list[str]) -> None:
             rows[key] = r
     assets, liab, equity = rows.get("자산총계"), rows.get("부채총계"), rows.get("자본총계")
     total_le = next((rows[k] for k in _TOTAL_LE_KEYS if k in rows), None)
+    if assets is None or ((liab is None or equity is None) and total_le is None):
+        # XBRL 표준계정명 fallback: "자산"/"부채"/"자본"/"자본과 부채" 정확 일치 + 숫자 값 행
+        fb = _fallback_total_rows(stmt)
+        used: list[str] = []
+        for name, current in (("자산", assets), ("부채", liab), ("자본", equity)):
+            if current is None and name in fb:
+                used.append(name)
+        assets = assets if assets is not None else fb.get("자산")
+        liab = liab if liab is not None else fb.get("부채")
+        equity = equity if equity is not None else fb.get("자본")
+        if (liab is None or equity is None) and total_le is None:
+            le_key = next((k for k in _FALLBACK_LE_KEYS if k in fb), None)
+            if le_key:
+                total_le = fb[le_key]
+                used.append(le_key)
+        if used:
+            logger.info("재무상태표(%s) 총계 행 fallback 사용(XBRL 표준계정명): %s", stmt.scope, ", ".join(used))
     missing = [n for n, v in (("자산총계", assets), ("부채총계", liab), ("자본총계", equity)) if v is None]
     if assets is None or (missing and total_le is None):
         warnings.append(f"재무상태표({stmt.scope}) 대차 검증 불가: {', '.join(missing)} 행 없음")
