@@ -29,6 +29,10 @@ from scripts.batch_classify import CODE_DESCRIPTIONS, classify_warning, derive_c
         ("재무상태표: 헤더가 같은 표 7를 병합", "W_MERGED"),
         ("표 3: 열 수 불일치(최대 4, 최소 1)로 패딩", "W_PAD"),
         ("이 공시에 정정본이 있습니다: 2026.05.01 [기재정정] (rcpNo=1)", "W_RELATED"),
+        ("이 공시에는 재무제표 섹션이 없습니다(정정·첨부 공시일 수 있음). 같은 공시의 관련 문서: …", "E_NO_CONTENT"),
+        ("정정신고 공시로 보이며 재무제표 섹션이 없습니다. 원 공시의 rcpNo를 입력하세요.", "E_NO_CONTENT"),
+        ("재무제표 노드는 있으나 본문에 표가 없습니다(이미지 첨부 또는 기재 생략으로 추정). …", "E_NO_CONTENT"),
+        ("제출기한 연장 신고서로 보이며 재무제표가 없습니다. 원 공시 제출 후 그 rcpNo를 입력하세요.", "E_NO_CONTENT"),
         ("[연결_주석] 수신/파싱 실패: RuntimeError: boom", "E_EXC"),
         ("[연결_주석] 수신/파싱 실패: ConnectionError: ('Connection aborted.', RemoteDisconnected(...))", "E_NET"),
         ("[재무제표] 수신/파싱 실패: ReadTimeout: HTTPSConnectionPool", "E_NET"),
@@ -64,3 +68,4 @@ def test_is_normal() -> None:
     assert not is_normal(False, [])
     assert not is_normal(True, ["E_TIMEOUT"])
     assert not is_normal(True, ["E_NET"])
+    assert not is_normal(False, ["E_NO_CONTENT"])

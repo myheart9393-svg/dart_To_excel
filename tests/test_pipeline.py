@@ -35,6 +35,10 @@ _ELE_MAP = {
     (NOCONSOL, "26"): "notes_annual_noconsol.html",
     ("20260612000132", "3"): "fs_tableless.html",  # 그랜드코리아: 표지 nb 표만 있는 재무제표 노드
     ("20260612000132", "4"): "notes_tableless.html",
+    ("20250617000374", "3"): "fs_tableless2.html",  # 에스티피테크: 표 없는 첨부 + 주석 노드에 문구만
+    ("20250617000374", "4"): "notes_tableless2.html",
+    ("20250430000788", "3"): "fs_tableless3.html",  # 씨앤케이: 연결 스코프의 같은 유형
+    ("20250430000788", "4"): "notes_tableless3.html",
 }
 NOFIN = "20260730000175"  # 케이엘넷 자기주식 정정 공시 — 트리에 재무 섹션 없음 (related 있음)
 TABLELESS = "20260612000132"  # 그랜드코리아 감사보고서 — 재무제표 노드에 본문표 없음
@@ -46,6 +50,8 @@ _MAIN_MAP = {
     NOCONSOL: "main_do_annual_noconsol.html", NOFIN: "main_do_no_fin_section.html",
     TABLELESS: "main_do_tableless.html", CORRECTION: "main_do_correction_only.html",
     CORRECTION_NOREL: "main_do_correction_norel.html",
+    "20250617000374": "main_do_tableless2.html", "20250430000788": "main_do_tableless3.html",
+    "20260324000017": "main_do_extension.html",
 }
 
 
@@ -265,6 +271,20 @@ def test_correction_only_message(fake_fetch) -> None:
         convert_report(CORRECTION)
     assert "재무제표 섹션이 없습니다" in str(exc_info.value)
     assert "rcpNo=20250318001336" in str(exc_info.value)
+
+
+def test_tableless_with_trivial_notes_message(fake_fetch) -> None:
+    """표 없는 첨부인데 주석 노드에 문구만 있는 문서: 성공 대신 표 없음 안내 (실측 에스티피테크·씨앤케이)."""
+    with pytest.raises(ConversionError, match="본문에 표가 없습니다"):
+        convert_report("20250617000374")
+    with pytest.raises(ConversionError, match="본문에 표가 없습니다"):
+        convert_report("20250430000788")
+
+
+def test_extension_notice_message(fake_fetch) -> None:
+    """제출기한 연장 신고서: 원 공시 제출 후 재시도 안내 (실측 이엠넷)."""
+    with pytest.raises(ConversionError, match="연장 신고서로 보이며"):
+        convert_report("20260324000017")
 
 
 def test_correction_no_related_message(fake_fetch) -> None:

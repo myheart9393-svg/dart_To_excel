@@ -9,6 +9,7 @@ from __future__ import annotations
 # 코드 → 설명 (summary.md 용)
 CODE_DESCRIPTIONS: dict[str, str] = {
     "E_EXC": "예외 발생 (변환 실패 또는 부분 수신/파싱 실패)",
+    "E_NO_CONTENT": "문서에 재무 내용 없음 (정정·첨부·연장 공시, 표 없는 첨부 — 파서 문제 아님)",
     "E_NET": "네트워크 오류 (연결 끊김/타임아웃 — IP 차단 추정 신호)",
     "E_TIMEOUT": "60초 타임아웃",
     "F_NO_BS": "어느 스코프든 재무상태표 없음",
@@ -58,6 +59,10 @@ _WARNING_RULES: list[tuple[str, str]] = [
     ("헤더가 같은 표", "W_MERGED"),
     ("열 수 불일치", "W_PAD"),
     ("정정본이 있습니다", "W_RELATED"),
+    ("재무제표 섹션이 없습니다", "E_NO_CONTENT"),
+    ("정정신고 공시로 보이며", "E_NO_CONTENT"),
+    ("본문에 표가 없습니다", "E_NO_CONTENT"),
+    ("연장 신고서로 보이며", "E_NO_CONTENT"),
     ("RemoteDisconnected", "E_NET"),
     ("ConnectionError", "E_NET"),
     ("ConnectTimeout", "E_NET"),

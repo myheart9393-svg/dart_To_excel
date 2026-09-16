@@ -230,12 +230,41 @@ def merge_split_statement(a: Statement, b: Statement) -> Statement:
 
 _NAME_NORM_RE = re.compile(r"[(（][^)）]*[)）]")
 _TOTAL_LE_KEYS = ("부채와자본총계", "부채및자본총계", "자본과부채총계", "부채와자본의총계")
+# 역할별 정확 일치 키. "총자산"/"총부채"/"총자본" 변형 실측 (20260316001039 신세계).
+_TOTAL_ROLE_KEYS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("자산총계", ("자산총계", "총자산")),
+    ("부채총계", ("부채총계", "총부채")),
+    ("자본총계", ("자본총계", "총자본")),
+)
+_ALL_TOTAL_KEYS: frozenset[str] = frozenset(
+    k for _, keys in _TOTAL_ROLE_KEYS for k in keys
+) | frozenset(_TOTAL_LE_KEYS)
 # XBRL 표준계정명 문서(예: 20260316001287 현대리바트)는 총계 행이 "자산"/"부채"/"자본"/"자본과 부채".
 _FALLBACK_LE_KEYS = ("자본과부채", "부채와자본", "부채및자본")
 
 
 def _norm_account(name: object) -> str:
     return _WS_RE.sub("", _NAME_NORM_RE.sub("", str(name or "")))
+
+
+def _find_total_rows(stmt: Statement) -> dict[str, list]:
+    """총계 행 탐색: 괄호 제거 **전** 정규화(공백만 제거)로 정확 일치하는 행을 우선하고,
+    그 키가 없을 때만 괄호 제거 정규화로 매칭한다. 같은 이름이 여러 번이면 마지막 행 (총계는 항상 아래).
+
+    이유(실측 20260814003871 KX): ``자본총계(지배기업소유주지분)`` 행이 괄호 제거 후 ``자본총계`` 가
+    되어 진짜 ``자본총계`` (비지배지분 포함) 대신 잡히는 오매칭 방지.
+    """
+    raw: dict[str, list] = {}
+    stripped: dict[str, list] = {}
+    for r in stmt.table.rows:
+        name = str(r[0] if r else "")
+        k_raw = _WS_RE.sub("", name)
+        if k_raw in _ALL_TOTAL_KEYS:
+            raw[k_raw] = r
+        k_stripped = _norm_account(name)
+        if k_stripped in _ALL_TOTAL_KEYS:
+            stripped[k_stripped] = r
+    return {k: (raw[k] if k in raw else stripped[k]) for k in _ALL_TOTAL_KEYS if k in raw or k in stripped}
 
 
 def _fallback_total_rows(stmt: Statement) -> dict[str, list]:
@@ -254,7 +283,8 @@ def _fallback_total_rows(stmt: Statement) -> dict[str, list]:
 def validate_balance_sheet(stmt: Statement, warnings: list[str]) -> None:
     """재무상태표 대차 검증: 열마다 ``자산총계 == 부채총계 + 자본총계`` (또는 ``부채와자본총계``) 를 확인한다.
 
-    계정과목은 공백·괄호내용을 제거해 비교한다. 차이가 ``max(1, 자산총계×1e-6)`` 를 넘으면
+    총계 행은 :func:`_find_total_rows` 로 찾는다 (괄호 제거 전 정확 일치 우선, 같은 이름은 마지막 행,
+    ``총자산``/``총부채``/``총자본`` 변형 포함). 차이가 ``max(1, 자산총계×1e-6)`` 를 넘으면
     "파싱 오류 가능" 경고, 필요한 행을 못 찾으면 "대차 검증 불가" 경고를 ``warnings`` 에 남긴다.
     ``~총계`` 행이 없으면 XBRL 표준계정명(``자산``/``부채``/``자본``/``자본과 부채``, 숫자 값이 있는 행)
     으로 fallback 한다 (경고 아님, logging.info).
@@ -264,12 +294,13 @@ def validate_balance_sheet(stmt: Statement, warnings: list[str]) -> None:
         stmt: 재무상태표 Statement.
         warnings: 경고 누적 리스트.
     """
-    rows: dict[str, list] = {}
-    for r in stmt.table.rows:
-        key = _norm_account(r[0] if r else "")
-        if key in ("자산총계", "부채총계", "자본총계", *_TOTAL_LE_KEYS) and key not in rows:
-            rows[key] = r
-    assets, liab, equity = rows.get("자산총계"), rows.get("부채총계"), rows.get("자본총계")
+    rows = _find_total_rows(stmt)
+
+    def role(canon: str) -> Optional[list]:
+        keys = next(ks for c, ks in _TOTAL_ROLE_KEYS if c == canon)
+        return next((rows[k] for k in keys if k in rows), None)
+
+    assets, liab, equity = role("자산총계"), role("부채총계"), role("자본총계")
     total_le = next((rows[k] for k in _TOTAL_LE_KEYS if k in rows), None)
     if assets is None or ((liab is None or equity is None) and total_le is None):
         # XBRL 표준계정명 fallback: "자산"/"부채"/"자본"/"자본과 부채" 정확 일치 + 숫자 값 행

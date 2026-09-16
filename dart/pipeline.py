@@ -290,6 +290,17 @@ def convert_report(
     if base_date and "base_date" not in meta:
         meta["base_date"] = base_date
 
+    # 표 없는 첨부의 사각: 주석이 미분류 1개 이하이거나 총 텍스트 200자 미만이면 내용이 없는 것으로 본다
+    notes_trivial = (
+        (len(notes) <= 1 and all(n.number == 0 for n in notes))
+        or sum(len(b.text or "") for n in notes for b in n.blocks) < 200
+    )
+    if not statements and tableless_fs and notes_trivial:
+        raise ConversionError(
+            "재무제표 노드는 있으나 본문에 표가 없습니다(이미지 첨부 또는 기재 생략으로 추정). "
+            "원문을 DART에서 직접 확인하세요."
+        )
+
     if not statements and not notes:
         related = meta.get("related_reports") or []
         if tableless_fs:
@@ -304,6 +315,13 @@ def convert_report(
             raise ConversionError(
                 "이 공시에는 재무제표 섹션이 없습니다(정정·첨부 공시일 수 있음). "
                 f"같은 공시의 관련 문서: {rel_txt}"
+            )
+        if not fs_keys and not note_keys and any(
+            "연장" in normalize_title(n.title) or "제출기한" in normalize_title(n.title) for n in nodes
+        ):
+            # 제출기한 연장 신고서 (실측: 20260324000017 이엠넷)
+            raise ConversionError(
+                "제출기한 연장 신고서로 보이며 재무제표가 없습니다. 원 공시 제출 후 그 rcpNo를 입력하세요."
             )
         if not fs_keys and not note_keys and any("정정" in normalize_title(n.title) for n in nodes):
             # 정정신고 공시 (재무 섹션·관련 문서 안내 불가, 실측: 20250326001194 지슨)

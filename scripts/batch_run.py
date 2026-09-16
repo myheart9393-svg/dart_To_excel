@@ -117,8 +117,11 @@ def _run_target(row: dict, save_xlsx: bool) -> dict:
         return out
     except Exception as exc:  # noqa: BLE001 - 배치는 계속 진행
         net = _has_net_error(f"{type(exc).__name__}: {exc}")
+        code = "E_NET" if net else classify_warning(str(exc))
+        if code not in ("E_NET", "E_NO_CONTENT"):
+            code = "E_EXC"
         out.update({"성공여부": "실패", "예외클래스": type(exc).__name__,
-                    "경고요약": "E_NET" if net else "E_EXC",
+                    "경고요약": code,
                     "소요초": f"{time.perf_counter() - t0:.1f}", "경고수": 0})
         out["_blocked"] = "거부" in str(exc)  # DART 차단 집계용 (CSV 에는 쓰지 않음)
         return out

@@ -235,3 +235,41 @@ def test_mixed_numeric_warning_aggregated() -> None:
     assert mixed == [
         "재무제표 표 1개에서 숫자 열에 문자열 값이 섞여 원문 그대로 남김 (재무상태표)"
     ]
+
+
+def _stmt_with_rows(rows: list[list]) -> Statement:
+    table = Table(header_rows=[["과목", "제 1 기"]], rows=rows, depths=[0] * len(rows))
+    return Statement(kind="재무상태표", scope="단일", title="재무상태표", period_text=None, unit=None, table=table)
+
+
+def _load_fx(name: str):
+    from pathlib import Path
+    return (Path(__file__).parent / "fixtures" / name).read_text(encoding="utf-8")
+
+
+def test_total_row_paren_priority() -> None:
+    """'자본총계(지배기업소유주지분)' 이 있어도 괄호 없는 '자본총계'(비지배지분 포함) 행을 쓴다 (실측 KX)."""
+    stmt = _stmt_with_rows([
+        ["자산총계", 150.0],
+        ["부채총계", 50.0],
+        ["자본총계(지배기업소유주지분)", 80.0],
+        ["비지배지분", 20.0],
+        ["자본총계", 100.0],
+    ])
+    warnings: list[str] = []
+    validate_balance_sheet(stmt, warnings)
+    assert warnings == []
+
+
+def test_total_row_paren_priority_real() -> None:
+    """KX 반기 연결 재무제표: 대차 경고 없음."""
+    warnings: list[str] = []
+    extract_statements(_load_fx("fs_half_nci_paren.html"), "연결", warnings)
+    assert not any("파싱 오류 가능" in w or "검증 불가" in w for w in warnings)
+
+
+def test_total_row_chongja_real() -> None:
+    """신세계 별도 재무제표: '총자산'/'총부채' 키로 검증 통과."""
+    warnings: list[str] = []
+    extract_statements(_load_fx("fs_annual_chongja.html"), "별도", warnings)
+    assert not any("파싱 오류 가능" in w or "검증 불가" in w for w in warnings)
