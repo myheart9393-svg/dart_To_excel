@@ -31,7 +31,7 @@ _ELE_MAP = {
     (AUDIT_SFOOD, "4"): "notes_audit_sfood.html",
     (NOCONSOL, "19"): "fs_annual_noconsol_empty.html",  # 연결 미작성 → 빈 껍데기
     (NOCONSOL, "20"): "notes_annual_noconsol_empty.html",
-    (NOCONSOL, "21"): "fs_annual_separate.html",  # 실제 노드(ele_21)는 IP 차단으로 미확보 → 삼성 별도로 대체
+    (NOCONSOL, "21"): "fs_annual_noconsol.html",
     (NOCONSOL, "26"): "notes_annual_noconsol.html",
 }
 _MAIN_MAP = {
