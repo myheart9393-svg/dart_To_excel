@@ -34,10 +34,11 @@ _ELE_MAP = {
     (NOCONSOL, "21"): "fs_annual_noconsol.html",
     (NOCONSOL, "26"): "notes_annual_noconsol.html",
 }
+NOFIN = "20260730000175"  # 케이엘넷 자기주식 정정 공시 — 트리에 재무 섹션 없음
 _MAIN_MAP = {
     ANNUAL: "main_do_annual.html", AUDIT: "main_do_audit.html",
     AUDIT_SEP: "main_do_audit_separate.html", AUDIT_SFOOD: "main_do_audit_sfood.html",
-    NOCONSOL: "main_do_annual_noconsol.html",
+    NOCONSOL: "main_do_annual_noconsol.html", NOFIN: "main_do_no_fin_section.html",
 }
 
 
@@ -234,6 +235,15 @@ def test_e2e_no_split_sheets(fake_fetch) -> None:
     _, data, _, _ = _run(AUDIT, split_note_sheets=False)
     names = load_workbook(BytesIO(data)).sheetnames
     assert names == ["목차", "정보", "재무상태표", "포괄손익계산서", "자본변동표", "현금흐름표", "주석_전체"]
+
+
+def test_no_fin_section_message(fake_fetch) -> None:
+    """재무 섹션이 없는 정정·첨부 공시: 관련 문서 rcpNo 를 담은 안내 메시지로 실패한다 (실측 케이엘넷)."""
+    with pytest.raises(ConversionError) as exc_info:
+        convert_report(NOFIN)
+    msg = str(exc_info.value)
+    assert "재무제표 섹션이 없습니다" in msg
+    assert "rcpNo=20260730000045" in msg and "사업보고서" in msg
 
 
 def test_bad_input_raises() -> None:

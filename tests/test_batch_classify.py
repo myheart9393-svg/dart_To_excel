@@ -23,6 +23,10 @@ from scripts.batch_classify import CODE_DESCRIPTIONS, classify_warning, derive_c
         ("주석 분할 불일치로 자식 노드 34개 개별 수신 (연결)", "N_MISMATCH"),
         ("주석 22 제목이 잘렸을 수 있음 (bookmarktext 20자, 내부 텍스트 없음): '...'", "N_TRUNC"),
         ("주석 표 11개에서 숫자 열에 문자열 값이 섞여 원문 그대로 남김 (주석 12)", "W_MIXED"),
+        ("재무제표 표 2개에서 숫자 열에 문자열 값이 섞여 원문 그대로 남김 (재무상태표, 자본변동표)", "W_MIXED_STMT"),
+        ("[재 무 상 태 표] 숫자 열 '제 21 (당) 기' 에 숫자로 읽지 못한 값 2개가 문자열로 남았습니다.", "W_MIXED_STMT"),
+        ("주석 14 과 14-1 이 함께 있습니다 — 14 를 상위로 유지", "W_BRANCH_PARENT"),
+        ("재무상태표: 헤더가 같은 표 7를 병합", "W_MERGED"),
         ("표 3: 열 수 불일치(최대 4, 최소 1)로 패딩", "W_PAD"),
         ("이 공시에 정정본이 있습니다: 2026.05.01 [기재정정] (rcpNo=1)", "W_RELATED"),
         ("[연결_주석] 수신/파싱 실패: RuntimeError: boom", "E_EXC"),
@@ -54,6 +58,7 @@ def test_derive_codes() -> None:
 
 def test_is_normal() -> None:
     assert is_normal(True, ["W_MIXED", "W_RELATED"])
+    assert is_normal(True, ["W_MIXED_STMT", "W_BRANCH_PARENT", "W_MERGED"])
     assert not is_normal(True, ["W_MIXED", "N_GAP"])
     assert not is_normal(True, ["F_BALANCE"])
     assert not is_normal(False, [])

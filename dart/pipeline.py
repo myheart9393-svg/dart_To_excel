@@ -273,6 +273,14 @@ def convert_report(
         meta["base_date"] = base_date
 
     if not statements and not notes:
+        related = meta.get("related_reports") or []
+        if not fs_keys and not note_keys and related:
+            # 트리에 재무 섹션이 아예 없는 공시 (정정·첨부 공시 등, 실측: 20260730000175 케이엘넷)
+            rel_txt = " / ".join(f"{r['date']} {r['title']} (rcpNo={r['rcp_no']})" for r in related[:3])
+            raise ConversionError(
+                "이 공시에는 재무제표 섹션이 없습니다(정정·첨부 공시일 수 있음). "
+                f"같은 공시의 관련 문서: {rel_txt}"
+            )
         raise ConversionError("재무제표와 주석을 하나도 추출하지 못했습니다. " + " / ".join(warnings[-3:]))
 
     report = ParsedReport(meta=meta, statements=statements, notes=notes, warnings=warnings)

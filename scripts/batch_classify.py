@@ -26,6 +26,9 @@ CODE_DESCRIPTIONS: dict[str, str] = {
     "N_MISMATCH": "expected_titles 불일치 (누락/초과/제목 불일치/자식 개별 수신)",
     "N_TRUNC": "주석 제목 잘림 의심",
     "W_MIXED": "숫자 열 문자열 혼입 집계 (정상, 통계만)",
+    "W_MIXED_STMT": "재무제표 표 문자열 혼입 집계 (정상, 통계만)",
+    "W_BRANCH_PARENT": "주석 N 과 N-M 공존 — N 을 상위로 유지 (정상, 안내)",
+    "W_MERGED": "페이지 분할 표 병합 안내 (정상)",
     "W_PAD": "열 수 불일치 패딩",
     "W_RELATED": "정정본 안내",
     "W_OTHER": "미분류 경고 (원문 보존)",
@@ -48,7 +51,11 @@ _WARNING_RULES: list[tuple[str, str]] = [
     ("트리 순서와 어긋남", "N_MISMATCH"),
     ("직접 검출 실패", "N_MISMATCH"),
     ("누락 (검출 순서상", "N_GAP"),
+    ("재무제표 표", "W_MIXED_STMT"),  # "재무제표 표 N개에서 숫자 열에 …" — W_MIXED 보다 먼저
     ("숫자 열에 문자열 값이 섞여", "W_MIXED"),
+    ("숫자로 읽지 못한 값", "W_MIXED_STMT"),  # 집계 전 표별 원문 형태 (구버전 결과 호환)
+    ("이 함께 있습니다", "W_BRANCH_PARENT"),
+    ("헤더가 같은 표", "W_MERGED"),
     ("열 수 불일치", "W_PAD"),
     ("정정본이 있습니다", "W_RELATED"),
     ("RemoteDisconnected", "E_NET"),

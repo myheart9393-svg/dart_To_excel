@@ -343,6 +343,7 @@ def extract_statements(html: str, scope: Scope, warnings: list[str]) -> list[Sta
     soup = BeautifulSoup(html, "lxml")
     ctx: deque[str] = deque(maxlen=CTX_SIZE)
     results: list[Statement] = []
+    mixed_ids: set[int] = set()  # 숫자 열 혼입이 있었던 Statement (id 기준, 마지막에 1줄 집계)
     found_any = False
     body_table_no = 0
     block_no = 0
@@ -370,13 +371,17 @@ def extract_statements(html: str, scope: Scope, warnings: list[str]) -> list[Sta
             continue
 
         body_table_no += 1
-        grid, depth_grid = html_table_to_grid(block, return_depth=True, warnings=warnings, table_no=body_table_no)
+        local: list[str] = []
+        grid, depth_grid = html_table_to_grid(block, return_depth=True, warnings=local, table_no=body_table_no)
         header_count = split_header_rows(grid, count_thead_rows(block))
         ctx_list = list(ctx)
         title_idx = _title_index(ctx_list)
         title = _clean(ctx_list[title_idx]) if title_idx >= 0 else None
         period_text, unit = _period_and_unit(ctx_list, title_idx)
-        table = grid_to_table(grid, depth_grid, header_count, title, unit, warnings)
+        table = grid_to_table(grid, depth_grid, header_count, title, unit, local)
+        # 숫자 열 혼입은 주석과 같은 방식으로 표별 경고 대신 마지막에 1줄로 집계한다 (값은 문자열로 보존됨)
+        table_mixed = any("숫자 열" in m for m in local)
+        warnings.extend(m for m in local if "숫자 열" not in m)
         kind, basis = identify_statement_kind(ctx_list, table)
         ctx.clear()
         if kind is None:
@@ -395,15 +400,26 @@ def extract_statements(html: str, scope: Scope, warnings: list[str]) -> list[Sta
         if same:
             prev = same[-1]
             if prev.table.header_rows == stmt.table.header_rows:
-                results[results.index(prev)] = merge_split_statement(prev, stmt)
+                merged = merge_split_statement(prev, stmt)
+                results[results.index(prev)] = merged
+                if id(prev) in mixed_ids or table_mixed:
+                    mixed_ids.add(id(merged))
                 warnings.append(f"{kind}{prev.suffix}: 헤더가 같은 표 {body_table_no}를 병합")
                 continue
             stmt.suffix = f"_{len(same) + 1}"
             warnings.append(f"{kind}: 같은 종류의 표가 다시 나와 suffix {stmt.suffix!r} 부여 (표 순번 {body_table_no})")
+        if table_mixed:
+            mixed_ids.add(id(stmt))
         results.append(stmt)
 
     if cut_at is not None:
         logger.info("블록 %d에서 주석 시작 감지(%r), 이후 표 %d개 미처리", cut_at[0], cut_at[1], remaining_tables)
+    mixed_names = [s.kind + s.suffix for s in results if id(s) in mixed_ids]
+    if mixed_names:
+        warnings.append(
+            f"재무제표 표 {len(mixed_names)}개에서 숫자 열에 문자열 값이 섞여 원문 그대로 남김 "
+            f"({', '.join(mixed_names)})"
+        )
     for stmt in results:
         if stmt.kind == "재무상태표":
             validate_balance_sheet(stmt, warnings)

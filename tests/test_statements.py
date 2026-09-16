@@ -216,3 +216,22 @@ def test_cut_at_branch_first_note() -> None:
     stmts = extract_statements(html, "단일", warnings)
     assert [s.kind for s in stmts] == ["재무상태표"]
     assert len(stmts[0].table.rows) == 3  # 주석 쪽 표는 절단되어 미포함
+
+
+def test_mixed_numeric_warning_aggregated() -> None:
+    """재무제표 표의 숫자 열 문자열 혼입은 표별 경고 대신 1줄 집계 (주석과 동일 방식)."""
+    html = (
+        '<html><body><table class="nb"><tr><td>재 무 상 태 표</td></tr></table>'
+        '<table border="1"><thead><tr><th>과목</th><th>제 1 기</th><th>제 2 기</th></tr></thead>'
+        '<tr><td>자산총계</td><td>100</td><td>비지배*</td></tr>'
+        '<tr><td>부채총계</td><td>60</td><td>50</td></tr>'
+        '<tr><td>자본총계</td><td>40</td><td>해당없음</td></tr>'
+        '</table></body></html>'
+    )
+    warnings: list[str] = []
+    statements = extract_statements(html, "단일", warnings)
+    assert len(statements) == 1 and statements[0].kind == "재무상태표"
+    mixed = [w for w in warnings if "숫자" in w]
+    assert mixed == [
+        "재무제표 표 1개에서 숫자 열에 문자열 값이 섞여 원문 그대로 남김 (재무상태표)"
+    ]

@@ -56,6 +56,11 @@ elif submitted:
     except ConversionError as exc:
         progress_bar.empty()
         st.error(str(exc))
+        related_rcpnos = re.findall(r"rcpNo=(\d{14})", str(exc))
+        if related_rcpnos:
+            st.markdown("관련 문서 rcpNo (복사해서 다시 시도):")
+            for rcp in related_rcpnos:
+                st.code(rcp)
         with st.expander("상세 오류"):
             st.code(traceback.format_exc())
     except Exception as exc:  # noqa: BLE001 - UI 에서는 모든 예외를 사용자에게 보여준다

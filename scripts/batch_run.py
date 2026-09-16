@@ -5,7 +5,7 @@
 - 원본 HTML 은 ``batch/cache/<rcpNo>/`` 에 저장하고, 있으면 네트워크 대신 캐시를 쓴다
   (``--offline`` 이면 캐시 없을 때 실패 처리). 주입은 dart.pipeline.fetch_html monkeypatch —
   파이프라인 코드는 바꾸지 않는다.
-- 문서 간 6초·노드 요청 간 1.5초·네트워크 문서 25건마다 3분 휴지, 동시성 1. 한 건 60초 초과 시 E_TIMEOUT.
+- 문서 간 6초·노드 요청 간 1.5초·네트워크 문서 25건마다 3분 휴지, 동시성 1. 한 건 300초 초과 시 E_TIMEOUT.
 - 네트워크 오류(E_NET)가 연속 3문서면 IP 차단 추정으로 즉시 중단.
 - 재실행 시 성공 기록이 있는 rcpNo 는 건너뛴다(--redo 로 강제). 캐시가 있으면 네트워크를 쓰지 않는다.
 - --only-codes N_MISMATCH,W_OTHER : 해당 코드가 난 문서만 재실행 (--offline 과 조합).
@@ -34,7 +34,7 @@ from scripts.batch_classify import classify_warning, derive_codes  # noqa: E402
 CACHE_DIR = Path("batch/cache")
 RESULTS_CSV = Path("batch/results.csv")
 XLSX_DIR = Path("batch/xlsx")
-TIMEOUT_SEC = 60.0
+TIMEOUT_SEC = 300.0  # 주석 자식 개별 수신(노드 간 1.5초) 문서가 60초를 넘는 실측(제이앤티씨 124초) 반영
 SLEEP_BETWEEN_SEC = 6.0  # 문서 간 (네트워크 사용 시)
 NODE_SLEEP_SEC = 1.5  # 같은 문서 안 노드 요청 간
 REST_EVERY_DOCS = 25  # 네트워크 문서 N건마다
