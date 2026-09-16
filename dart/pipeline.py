@@ -18,7 +18,7 @@ from dart.fetcher import MAIN_URL, DartBlockedError, build_session, fetch_html
 from dart.models import DocNode, Note, ParsedReport, Scope
 from dart.notes import parse_expected_heading, split_notes
 from dart.statements import extract_statements
-from dart.tree import parse_doc_tree, parse_report_input, select_target_nodes
+from dart.tree import normalize_title, parse_doc_tree, parse_report_input, select_target_nodes
 
 logger = logging.getLogger(__name__)
 
@@ -121,6 +121,21 @@ def base_date_from_statements(statements: list) -> Optional[str]:
 
 _TAG_STRIP_RE = re.compile(r"<[^>]+>")
 EMPTY_NODE_TEXT_LEN = 300
+
+
+_BODY_TABLE_RE = re.compile(r'<table[^>]*border\s*=\s*"?1|<thead', re.I)
+
+
+def _has_no_body_table(html: str) -> bool:
+    """본문표(border="1" 또는 <thead>)가 없고 태그 제거 후 비공백 텍스트가 500자 미만인지.
+
+    표지 nb 표만 있고 재무제표 표가 없는 첨부(이미지 첨부·기재 생략 추정, 실측 20260612000132
+    그랜드코리아·20250805000195 강릉아이앤디) 판정용.
+    """
+    if _BODY_TABLE_RE.search(html):
+        return False
+    text = _TAG_STRIP_RE.sub(" ", html)
+    return len(re.sub(r"\s+", "", text)) < 500
 
 
 def _is_empty_node(html: str) -> bool:
@@ -226,6 +241,7 @@ def convert_report(
     report_progress(0.20, "재무제표·주석 노드 선택 완료")
 
     statements = []
+    tableless_fs: list[str] = []  # 본문표 없는 재무제표 노드 (표 없는 첨부 안내용)
     fs_keys = [k for k in FS_KEYS if k in selected]
     for i, key in enumerate(fs_keys):
         scope = _scope_of(key)
@@ -235,6 +251,8 @@ def convert_report(
             if _is_empty_node(html):
                 logger.info("[%s] 빈 노드(연결 미작성 등) — 이 스코프의 재무제표 없음", key)
                 continue
+            if _has_no_body_table(html):
+                tableless_fs.append(key)
             statements += extract_statements(html, scope, warnings)
         except DartBlockedError as exc:
             warnings.append(f"[{key}] {USER_MSG_BLOCKED}: {str(exc)[:200]}")
@@ -274,6 +292,12 @@ def convert_report(
 
     if not statements and not notes:
         related = meta.get("related_reports") or []
+        if tableless_fs:
+            # 노드는 선택됐지만 본문표가 없는 첨부 (실측: 20260612000132 그랜드코리아)
+            raise ConversionError(
+                "재무제표 노드는 있으나 본문에 표가 없습니다(이미지 첨부 또는 기재 생략으로 추정). "
+                "원문을 DART에서 직접 확인하세요."
+            )
         if not fs_keys and not note_keys and related:
             # 트리에 재무 섹션이 아예 없는 공시 (정정·첨부 공시 등, 실측: 20260730000175 케이엘넷)
             rel_txt = " / ".join(f"{r['date']} {r['title']} (rcpNo={r['rcp_no']})" for r in related[:3])
@@ -281,6 +305,9 @@ def convert_report(
                 "이 공시에는 재무제표 섹션이 없습니다(정정·첨부 공시일 수 있음). "
                 f"같은 공시의 관련 문서: {rel_txt}"
             )
+        if not fs_keys and not note_keys and any("정정" in normalize_title(n.title) for n in nodes):
+            # 정정신고 공시 (재무 섹션·관련 문서 안내 불가, 실측: 20250326001194 지슨)
+            raise ConversionError("정정신고 공시로 보이며 재무제표 섹션이 없습니다. 원 공시의 rcpNo를 입력하세요.")
         raise ConversionError("재무제표와 주석을 하나도 추출하지 못했습니다. " + " / ".join(warnings[-3:]))
 
     report = ParsedReport(meta=meta, statements=statements, notes=notes, warnings=warnings)

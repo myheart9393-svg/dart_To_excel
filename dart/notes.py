@@ -40,6 +40,7 @@ BOOKMARK_ATTR_LIMIT = 20  # DART 편집기가 bookmarktext 속성을 자르는 �
 TITLE_MAX_LEN = 80
 SUBHEADING_MAX_LEN = 60
 TITLE_BAD_ENDINGS = (".", "다", "음", "임")
+SHORT_DOT_TITLE_MAX = 15  # "11. 법인세." 처럼 마침표로 끝나도 제목으로 허용하는 최대 길이 (마침표 제외)
 BLOCK_TAGS = ("p", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol")
 STRUCTURE_P_CLASS = "table-group-xbrl"
 
@@ -115,9 +116,10 @@ def _label(number: int, branch: Optional[int]) -> str:
     return f"{number}-{branch}" if branch else str(number)
 
 
-# 트리 자식 제목의 번호 표기 4형식 (실측): "14-1. 무형자산" / "2.1 재무제표 작성기준" /
-# "19, 20. 영업권 및 무형자산" / "1. 일반사항". 순서 중요 (plain 은 마지막).
+# 트리 자식 제목의 번호 표기 5형식 (실측): "주석1,2 - 회사의 개요"(제이앤티씨) / "14-1. 무형자산" /
+# "2.1 재무제표 작성기준" / "19, 20. 영업권 및 무형자산" / "1. 일반사항". 순서 중요 (plain 은 마지막).
 _EXPECTED_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"^\s*주\s*석\s*(\d{1,2})((?:\s*,\s*\d{1,2})*)(?:\s*[-–.．]\s*|\s+)(\S.*)$"), "prefix"),
     (re.compile(r"^\s*(\d{1,2})\s*-\s*(\d{1,2})\s*[.．]\s*(\S.*)$"), "dash"),
     (re.compile(r"^\s*(\d{1,2})[.．](\d{1,2})\s+(\S.*)$"), "dot"),
     (re.compile(r"^\s*(\d{1,2})((?:\s*,\s*\d{1,2})+)\s*[.．]\s*(\S.*)$"), "comma"),
@@ -128,9 +130,9 @@ _EXPECTED_PATTERNS: list[tuple[re.Pattern[str], str]] = [
 def parse_expected_heading(text: str) -> Optional[tuple[int, Optional[int], str, str]]:
     """트리 자식 제목을 ``(번호, 가지|None, 제목, 라벨)`` 로 파싱한다. 형식이 아니면 None.
 
-    :func:`parse_heading` 보다 넓은 4형식을 받는다: ``14-1.`` (라벨 "14-1"),
-    ``2.1 제목`` (번호 2·가지 1·라벨 "2.1"), ``19, 20. 제목`` (번호 19·라벨 "19, 20"),
-    ``1. 제목`` (라벨 "1").
+    :func:`parse_heading` 보다 넓은 5형식을 받는다: ``주석1,2 - 제목`` (번호 1·라벨 "1,2"),
+    ``14-1.`` (라벨 "14-1"), ``2.1 제목`` (번호 2·가지 1·라벨 "2.1"),
+    ``19, 20. 제목`` (번호 19·라벨 "19, 20"), ``1. 제목`` (라벨 "1").
 
     Args:
         text: 문서 트리 자식 노드 제목.
@@ -144,6 +146,10 @@ def parse_expected_heading(text: str) -> Optional[tuple[int, Optional[int], str,
         if not m:
             continue
         n = int(m.group(1))
+        if kind == "prefix":
+            nums = [n] + [int(x) for x in re.findall(r"\d{1,2}", m.group(2) or "")]
+            label = ",".join(str(x) for x in nums)
+            return n, None, m.group(3).strip(), label
         if kind == "dash":
             return n, int(m.group(2)), m.group(3).strip(), f"{n}-{int(m.group(2))}"
         if kind == "dot":
@@ -153,6 +159,27 @@ def parse_expected_heading(text: str) -> Optional[tuple[int, Optional[int], str,
             return n, None, m.group(3).strip(), ", ".join(str(x) for x in nums)
         return n, None, m.group(2).strip(), str(n)
     return None
+
+
+def _title_ends_badly(title: str) -> bool:
+    """제목이 문장 종결(``.``/``다``/``음``/``임``)로 끝나 제목 후보에서 탈락해야 하는지.
+
+    예외: ``11. 법인세.`` 처럼 마침표를 뗀 제목이 15자 이하이고 공백·쉼표가 없으며
+    ``다``/``음``/``임`` 으로 끝나지 않으면 제목으로 허용한다 (실측 20260106000468).
+    """
+    t = title.strip()
+    if not t.endswith(TITLE_BAD_ENDINGS):
+        return False
+    if t.endswith((".", "．")):
+        core = t.rstrip(".．").strip()
+        if (
+            core
+            and len(core) <= SHORT_DOT_TITLE_MAX
+            and not re.search(r"[\s　,，]", core)
+            and not core.endswith(("다", "음", "임"))
+        ):
+            return False
+    return True
 
 
 def is_subheading(text: str) -> bool:
@@ -193,7 +220,7 @@ def _is_title_line(line: str) -> bool:
     """한 줄이 텍스트 단계 주석 제목 조건(``N. 제목``, 길이 ≤ 80, 문장 종결로 끝나지 않음)을 만족하는지."""
     t = _clean(line)
     m = NOTE_HEADING_RE.match(t)
-    return bool(m) and len(t) <= TITLE_MAX_LEN and not m.group(3).strip().endswith(TITLE_BAD_ENDINGS)
+    return bool(m) and len(t) <= TITLE_MAX_LEN and not _title_ends_badly(m.group(3))
 
 
 # 제목 줄 뒤에서 별도 블록으로 떼는 하위 번호 줄: (1) / 2.1 / 가. / ①  (길이 ≤ 60)
@@ -364,7 +391,7 @@ def _title_candidates(blocks: list[_Block]) -> tuple[list[_Candidate], list[tupl
             title = h[2]
             if len(text) > TITLE_MAX_LEN:
                 rejected.append((text[:40], f"길이 {len(text)} > {TITLE_MAX_LEN}"))
-            elif title.endswith(TITLE_BAD_ENDINGS):
+            elif _title_ends_badly(title):
                 rejected.append((text[:40], f"문장 종결({title[-1]!r})로 끝남"))
             else:
                 cands.append(_Candidate(i, h[0], title, "text", span, branch=h[1]))

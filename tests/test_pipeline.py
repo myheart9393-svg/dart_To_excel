@@ -33,12 +33,19 @@ _ELE_MAP = {
     (NOCONSOL, "20"): "notes_annual_noconsol_empty.html",
     (NOCONSOL, "21"): "fs_annual_noconsol.html",
     (NOCONSOL, "26"): "notes_annual_noconsol.html",
+    ("20260612000132", "3"): "fs_tableless.html",  # 그랜드코리아: 표지 nb 표만 있는 재무제표 노드
+    ("20260612000132", "4"): "notes_tableless.html",
 }
-NOFIN = "20260730000175"  # 케이엘넷 자기주식 정정 공시 — 트리에 재무 섹션 없음
+NOFIN = "20260730000175"  # 케이엘넷 자기주식 정정 공시 — 트리에 재무 섹션 없음 (related 있음)
+TABLELESS = "20260612000132"  # 그랜드코리아 감사보고서 — 재무제표 노드에 본문표 없음
+CORRECTION = "20250326001194"  # 지슨 정정신고 — 재무 섹션 없음 (related 있음 → 관련 문서 안내)
+CORRECTION_NOREL = "20250326001195"  # 지슨 main 에서 <option> 제거한 변형 — related 없음 → 정정신고 안내
 _MAIN_MAP = {
     ANNUAL: "main_do_annual.html", AUDIT: "main_do_audit.html",
     AUDIT_SEP: "main_do_audit_separate.html", AUDIT_SFOOD: "main_do_audit_sfood.html",
     NOCONSOL: "main_do_annual_noconsol.html", NOFIN: "main_do_no_fin_section.html",
+    TABLELESS: "main_do_tableless.html", CORRECTION: "main_do_correction_only.html",
+    CORRECTION_NOREL: "main_do_correction_norel.html",
 }
 
 
@@ -244,6 +251,26 @@ def test_no_fin_section_message(fake_fetch) -> None:
     msg = str(exc_info.value)
     assert "재무제표 섹션이 없습니다" in msg
     assert "rcpNo=20260730000045" in msg and "사업보고서" in msg
+
+
+def test_tableless_fs_message(fake_fetch) -> None:
+    """재무제표 노드는 있으나 본문표가 없는 첨부: 표 없음 안내로 실패한다 (실측 그랜드코리아)."""
+    with pytest.raises(ConversionError, match="본문에 표가 없습니다"):
+        convert_report(TABLELESS)
+
+
+def test_correction_only_message(fake_fetch) -> None:
+    """지슨(정정신고): related 가 있으므로 관련 문서 안내가 우선한다 (원 사업보고서 rcpNo 포함)."""
+    with pytest.raises(ConversionError) as exc_info:
+        convert_report(CORRECTION)
+    assert "재무제표 섹션이 없습니다" in str(exc_info.value)
+    assert "rcpNo=20250318001336" in str(exc_info.value)
+
+
+def test_correction_no_related_message(fake_fetch) -> None:
+    """정정신고 + related 없음(지슨 main 변형): 원 공시 rcpNo 입력 안내로 실패한다."""
+    with pytest.raises(ConversionError, match="정정신고 공시로 보이며"):
+        convert_report(CORRECTION_NOREL)
 
 
 def test_bad_input_raises() -> None:

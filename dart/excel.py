@@ -123,11 +123,16 @@ _SHEET_LABEL_NUM_RE = re.compile(r"^(\d+)(.*)$")
 
 
 def _sheet_label(note: Note) -> str:
-    """시트명용 번호 라벨: 쉼표·공백을 하이픈/제거로 바꾸고 선두 번호를 2자리로 채운다.
+    """시트명용 번호 라벨: 쉼표 라벨은 각 번호를 2자리로 채워 하이픈으로 잇고, 그 외는 선두 번호만 채운다.
 
-    ``5`` → ``05``, ``14-1`` → ``14-1``, ``2.1`` → ``02.1``, ``19, 20`` → ``19-20``.
+    ``5`` → ``05``, ``14-1`` → ``14-1``, ``2.1`` → ``02.1``, ``19, 20`` → ``19-20``, ``1,2`` → ``01-02``.
     """
-    lab = note_label(note).replace(",", "-").replace(" ", "")
+    lab = note_label(note).replace(" ", "")
+    if "," in lab:
+        parts = lab.split(",")
+        if all(p.isdigit() for p in parts):
+            return "-".join(f"{int(p):02d}" for p in parts)
+        lab = lab.replace(",", "-")
     m = _SHEET_LABEL_NUM_RE.match(lab)
     return f"{int(m.group(1)):02d}{m.group(2)}" if m else lab
 

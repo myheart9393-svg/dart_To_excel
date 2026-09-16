@@ -39,6 +39,16 @@ def test_parse_expected_heading_formats() -> None:
     assert parse_expected_heading("주석") is None
 
 
+def test_parse_expected_heading_prefix() -> None:
+    """5형식: 주석N - 제목 / 주석N,M - 제목 / 주석 N. 제목 (실측 20260323001603 제이앤티씨)."""
+    assert parse_expected_heading("주석1,2 - 회사의 개요 및 재무제표 작성기준 (연결)") == (
+        1, None, "회사의 개요 및 재무제표 작성기준 (연결)", "1,2"
+    )
+    assert parse_expected_heading("주석3 - 회계정책의 변경") == (3, None, "회계정책의 변경", "3")
+    assert parse_expected_heading("주석 4. 중요한 회계정책") == (4, None, "중요한 회계정책", "4")
+    assert parse_expected_heading("주석5 영업부문") == (5, None, "영업부문", "5")
+
+
 # ---------- 0단계: 트리 제목 정확 일치 ----------
 
 
@@ -86,6 +96,42 @@ def test_expected_exact_missing_middle_warns() -> None:
     assert [n.number for n in notes] == [i for i in range(1, 11) if i != 5]
     assert any("주석 5 제목을 본문에서 찾지 못함" in w for w in warnings)
     assert not any("누락 (검출 순서상" in w for w in warnings)  # N_GAP 없음
+
+
+def test_expected_prefix_real() -> None:
+    """제이앤티씨 연결주석(주석N - 제목 트리): 자식 38개 전부 검출, 미분류 0, 경고 없음."""
+    expected = _expected_titles("main_do_annual_noteprefix.html", "20260323001603", "연결_주석")
+    warnings: list[str] = []
+    notes = split_notes(_load("notes_annual_noteprefix.html"), "연결", warnings, expected)
+    assert len(notes) == len(expected) == 38
+    assert sum(1 for n in notes if n.number == 0) == 0
+    assert note_label(notes[0]) == "1,2"
+    assert note_sheet_name(notes[0], "연결").startswith("연결주석01-02_")
+    assert [w for w in warnings if "숫자 열" not in w] == []
+
+
+def test_dot_ending_title_real() -> None:
+    """타이코화이어 연결주석: '11. 법인세.' 가 마침표 종결 예외로 검출되어 N_GAP 없음."""
+    warnings: list[str] = []
+    notes = split_notes(_load("notes_audit_dottitle.html"), "연결", warnings)
+    nums = [n.number for n in notes]
+    assert 11 in nums and 10 in nums and 12 in nums
+    assert not any("주석 11 누락" in w for w in warnings)
+
+
+def test_dot_ending_title_synthetic() -> None:
+    """마침표 종결 완화의 한계: 공백 있는 문장('이 회사는 있다.')은 여전히 탈락."""
+    html = (
+        "<html><body><p>1. 개요</p><p>본문</p><p>2. 정책</p><p>본문</p>"
+        "<p>3. 이 회사는 있다.</p><p>본문</p></body></html>"
+    )
+    warnings: list[str] = []
+    notes = split_notes(html, "단일", warnings)
+    assert [n.number for n in notes] == [1, 2]
+    # 짧은 명사형 마침표 제목은 허용
+    html2 = "<html><body><p>1. 개요</p><p>본문</p><p>2. 법인세.</p><p>본문</p></body></html>"
+    notes2 = split_notes(html2, "단일", [])
+    assert [n.number for n in notes2] == [1, 2] and notes2[1].title == "법인세."
 
 
 # ---------- 시트명·라벨 ----------
