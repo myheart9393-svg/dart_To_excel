@@ -1,0 +1,73 @@
+# Streamlit Community Cloud 앱이 잠들지 않도록 3일마다 실제 브라우저로 접속한다.
+#
+# Streamlit 의 활동 판정은 단순 HTTP 요청이 아니라 실제 브라우저 접속(웹소켓) 기준이므로
+# Playwright(headless Chromium)로 페이지를 열고 잠시 머무른다. 앱이 이미 잠들어 있으면
+# "get this app back up" 버튼을 눌러 깨운다.
+#
+# 참고: GitHub 는 저장소에 60일간 커밋 등 활동이 없으면 schedule 워크플로를 자동 비활성화하고
+# 메일로 알려준다. 그때는 Actions 탭에서 Enable 버튼만 다시 누르면 된다.
+
+name: keep-alive
+
+on:
+  schedule:
+    - cron: "0 18 */3 * *" # 3일마다 UTC 18:00 = KST 새벽 3시 (잠 기준 약 7일보다 충분히 짧게)
+  workflow_dispatch: {} # Actions 탭에서 수동 실행용
+
+permissions: {}
+
+jobs:
+  wake:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      APP_URL: https://darttoexcel-betmaxksbryvxknlq8sscc.streamlit.app/
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Playwright 설치
+        run: |
+          pip install playwright==1.47.0
+          python -m playwright install --with-deps chromium
+
+      - name: 앱 접속 (잠들어 있으면 깨우기)
+        run: |
+          python - <<'PYEOF'
+          import os
+          import sys
+          import time
+
+          from playwright.sync_api import sync_playwright
+
+          url = os.environ["APP_URL"]
+          with sync_playwright() as p:
+              browser = p.chromium.launch()
+              page = browser.new_page()
+              page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+
+              # 잠든 앱 페이지면 깨우기 버튼을 누른다
+              try:
+                  btn = page.get_by_text("get this app back up", exact=False)
+                  if btn.count():
+                      btn.first.click()
+                      print("잠든 앱 발견 - 깨우기 버튼 클릭, 부팅 대기")
+              except Exception as exc:  # noqa: BLE001 - 버튼이 없으면 이미 깨어 있는 것
+                  print("깨우기 버튼 확인 중 예외(무시):", exc)
+
+              # 앱이 렌더될 때까지 최대 5분 대기 (부팅 포함)
+              ok = False
+              deadline = time.time() + 300
+              while time.time() < deadline:
+                  if page.locator("text=DART").count():
+                      ok = True
+                      break
+                  time.sleep(5)
+
+              # 웹소켓 접속이 '활동'으로 집계되도록 잠시 머무른다
+              time.sleep(30)
+              print("앱 렌더 확인:", ok, "| 페이지 제목:", page.title())
+              browser.close()
+              sys.exit(0 if ok else 1)
+          PYEOF
