@@ -84,6 +84,30 @@ def parse_report_input(user_input: str) -> str:
     raise ValueError(f"rcpNo를 찾을 수 없습니다: {user_input!r}")
 
 
+def parse_dcm_no(user_input: str) -> str | None:
+    """사용자 입력 URL 에서 ``dcmNo`` 쿼리 파라미터를 뽑는다. 없으면 None.
+
+    사업보고서에 첨부된 감사보고서는 ``main.do?rcpNo=..&dcmNo=..`` 형태로 지정된다
+    (실측 20260310002820: dcmNo 11104486 별도 감사보고서, 11104487 연결 감사보고서).
+    main.do 에 dcmNo 를 함께 주면 그 첨부 문서의 트리가 온다.
+
+    Args:
+        user_input: 사용자 입력 문자열.
+
+    Returns:
+        dcmNo 숫자 문자열 또는 None.
+    """
+    text = (user_input or "").strip().strip("\"'`<>()[] \t\r\n")
+    if "?" not in text:
+        return None
+    qs = parse_qs(urlparse(text).query)
+    for v in qs.get("dcmNo", []):
+        m = re.search(r"(\d{4,})", v)
+        if m:
+            return m.group(1)
+    return None
+
+
 def build_viewer_url(node: DocNode) -> str:
     """노드의 viewDoc 파라미터로 viewer.do 본문 URL 을 조립한다.
 

@@ -18,7 +18,7 @@ from dart.fetcher import MAIN_URL, DartBlockedError, build_session, fetch_html
 from dart.models import DocNode, Note, ParsedReport, Scope
 from dart.notes import parse_expected_heading, split_notes
 from dart.statements import extract_statements
-from dart.tree import normalize_title, parse_doc_tree, parse_report_input, select_target_nodes
+from dart.tree import normalize_title, parse_dcm_no, parse_doc_tree, parse_report_input, select_target_nodes
 
 logger = logging.getLogger(__name__)
 
@@ -219,11 +219,13 @@ def convert_report(
         rcp_no = parse_report_input(user_input)
     except ValueError as exc:
         raise ConversionError(str(exc)) from exc
-    report_progress(0.05, f"접수번호 {rcp_no} 확인")
+    dcm_no = parse_dcm_no(user_input)  # 사업보고서 첨부 감사보고서 지정 (없으면 None → 본문 문서)
+    report_progress(0.05, f"접수번호 {rcp_no} 확인" + (f" (첨부 dcmNo {dcm_no})" if dcm_no else ""))
 
+    main_url = f"{MAIN_URL}?rcpNo={rcp_no}" + (f"&dcmNo={dcm_no}" if dcm_no else "")
     session = build_session()
     try:
-        main_html = fetch_html(session, f"{MAIN_URL}?rcpNo={rcp_no}")
+        main_html = fetch_html(session, main_url)
     except DartBlockedError as exc:
         raise ConversionError(USER_MSG_BLOCKED) from exc
     except Exception as exc:  # noqa: BLE001
@@ -235,6 +237,14 @@ def convert_report(
 
     selected = select_target_nodes(nodes, warnings)
     meta = extract_meta(main_html, rcp_no)
+    if dcm_no:
+        meta["dcm_no"] = dcm_no
+        meta["source_url"] = main_url
+        # 첨부 문서의 <title> 은 모(母)공시 기준(예: 삼성전자/사업보고서)이므로 트리로 첨부 종류를 보정한다
+        attach = next((normalize_title(n.title) for n in nodes if "감사보고서" in normalize_title(n.title)), None)
+        if attach and meta.get("report_name"):
+            meta["report_name"] = f"{meta['report_name']} 첨부 " + ("연결감사보고서" if any(
+                "연결재무제표" in normalize_title(n.title) for n in nodes) else "감사보고서")
     for rel in meta.get("related_reports", []):
         if rel["is_correction"]:
             warnings.append(f"이 공시에 정정본이 있습니다: {rel['date']} {rel['title']} (rcpNo={rel['rcp_no']})")

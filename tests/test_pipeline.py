@@ -39,7 +39,14 @@ _ELE_MAP = {
     ("20250617000374", "4"): "notes_tableless2.html",
     ("20250430000788", "3"): "fs_tableless3.html",  # 씨앤케이: 연결 스코프의 같은 유형
     ("20250430000788", "4"): "notes_tableless3.html",
+    (ANNUAL, "3"): "fs_audit_attached.html",  # 사업보고서 첨부 연결감사보고서 (dcmNo=11104487)
+    (ANNUAL, "4"): "notes_audit_attached.html",
 }
+# main.do 를 dcmNo 와 함께 요청하면 첨부 문서의 트리가 온다 (rcpNo 는 모공시와 같음)
+_MAIN_DCM_MAP = {
+    (ANNUAL, "11104487"): "main_do_attached_audit.html",
+}
+ATTACHED_URL = f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={ANNUAL}&dcmNo=11104487"
 NOFIN = "20260730000175"  # 케이엘넷 자기주식 정정 공시 — 트리에 재무 섹션 없음 (related 있음)
 TABLELESS = "20260612000132"  # 그랜드코리아 감사보고서 — 재무제표 노드에 본문표 없음
 CORRECTION = "20250326001194"  # 지슨 정정신고 — 재무 섹션 없음 (related 있음 → 관련 문서 안내)
@@ -67,6 +74,9 @@ def _make_fake_fetch(calls: list[str], fail_ele: set[str] = frozenset(), blocked
         if "main.do" in url:
             if blocked:
                 raise DartBlockedError(url, "접근이 거부되었습니다")
+            dcm = p.get("dcmNo")
+            if dcm and (rcp, dcm) in _MAIN_DCM_MAP:
+                return (FIX / _MAIN_DCM_MAP[(rcp, dcm)]).read_text(encoding="utf-8")
             return (FIX / _MAIN_MAP[rcp]).read_text(encoding="utf-8")
         ele = p["eleId"]
         if ele in fail_ele:
@@ -291,6 +301,30 @@ def test_correction_no_related_message(fake_fetch) -> None:
     """정정신고 + related 없음(지슨 main 변형): 원 공시 rcpNo 입력 안내로 실패한다."""
     with pytest.raises(ConversionError, match="정정신고 공시로 보이며"):
         convert_report(CORRECTION_NOREL)
+
+
+def test_parse_dcm_no() -> None:
+    from dart.tree import parse_dcm_no
+
+    assert parse_dcm_no(ATTACHED_URL) == "11104487"
+    assert parse_dcm_no(f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={ANNUAL}") is None
+    assert parse_dcm_no(ANNUAL) is None  # rcpNo 단독 입력
+    assert parse_dcm_no("") is None
+
+
+def test_e2e_attached_audit(fake_fetch) -> None:
+    """사업보고서 첨부 연결감사보고서(rcpNo+dcmNo): 첨부 문서 트리로 변환된다 (실측 삼성전자)."""
+    report, data, values, _ = _run(ATTACHED_URL)
+    assert values[-1] == 1.0
+    assert fake_fetch[0].endswith(f"rcpNo={ANNUAL}&dcmNo=11104487")  # main.do 에 dcmNo 전달
+    scopes = {s.scope for s in report.statements} | {n.scope for n in report.notes}
+    assert scopes == {"연결"}
+    assert len(report.statements) >= 4 and len(report.notes) >= 10
+    assert report.meta["dcm_no"] == "11104487"
+    assert "dcmNo=11104487" in report.meta["source_url"]
+    assert "첨부 연결감사보고서" in report.meta["report_name"]
+    names = load_workbook(BytesIO(data)).sheetnames
+    assert not any(n.startswith(("연결", "별도")) for n in names)  # 단일 스코프 → 접두어 없음
 
 
 def test_bad_input_raises() -> None:
