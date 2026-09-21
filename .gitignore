@@ -11,3 +11,4 @@ venv/
 samples/
 batch/
 .env
+scripts/investigate_*.py
