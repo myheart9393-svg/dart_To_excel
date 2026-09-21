@@ -56,11 +56,23 @@ jobs:
               except Exception as exc:  # noqa: BLE001 - 버튼이 없으면 이미 깨어 있는 것
                   print("깨우기 버튼 확인 중 예외(무시):", exc)
 
-              # 앱이 렌더될 때까지 최대 5분 대기 (부팅 포함)
+              # 앱이 렌더될 때까지 최대 5분 대기 (부팅 포함). 판정은 페이지 제목 또는
+              # 어느 프레임에서든 본문에 'DART' 가 보이는지로 한다.
+              def rendered() -> bool:
+                  if "dart" in (page.title() or "").lower():
+                      return True
+                  for fr in page.frames:
+                      try:
+                          if fr.locator("text=DART").count():
+                              return True
+                      except Exception:  # noqa: BLE001 - 프레임 전환 중 일시 오류
+                          pass
+                  return False
+
               ok = False
               deadline = time.time() + 300
               while time.time() < deadline:
-                  if page.locator("text=DART").count():
+                  if rendered():
                       ok = True
                       break
                   time.sleep(5)
