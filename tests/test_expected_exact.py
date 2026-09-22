@@ -47,6 +47,19 @@ def test_parse_expected_heading_prefix() -> None:
     assert parse_expected_heading("주석3 - 회계정책의 변경") == (3, None, "회계정책의 변경", "3")
     assert parse_expected_heading("주석 4. 중요한 회계정책") == (4, None, "중요한 회계정책", "4")
     assert parse_expected_heading("주석5 영업부문") == (5, None, "영업부문", "5")
+    # 이마트형 (실측 20260318001024): 주석 뒤에 하이픈이 온다
+    assert parse_expected_heading("주석 - 1. 일반사항 - 연결 (연결)") == (1, None, "일반사항 - 연결 (연결)", "1")
+
+
+def test_expected_prefix_dash_real() -> None:
+    """이마트 별도주석('주석 - N. 제목' 트리·본문 동일): 자식 41개 전부 검출, 미분류 0, 경고 없음."""
+    expected = _expected_titles("main_do_annual_noteprefix2.html", "20260318001024", "별도_주석")
+    warnings: list[str] = []
+    notes = split_notes(_load("notes_annual_noteprefix2.html"), "별도", warnings, expected)
+    assert len(notes) == len(expected) == 41
+    assert sum(1 for n in notes if n.number == 0) == 0
+    assert all(n.source == "expected" for n in notes)
+    assert [w for w in warnings if "숫자 열" not in w] == []
 
 
 # ---------- 0단계: 트리 제목 정확 일치 ----------
