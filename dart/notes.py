@@ -21,7 +21,7 @@ from typing import Iterator, Optional, Union
 
 from bs4 import BeautifulSoup, NavigableString, Tag
 
-from dart.models import Note, NoteBlock, Scope
+from dart.models import NOTE_SUMMARY_TITLE, Note, NoteBlock, Scope
 from dart.tables import count_thead_rows, extract_unit, grid_to_table, html_table_to_grid, split_header_rows
 
 logger = logging.getLogger(__name__)
@@ -674,10 +674,18 @@ def split_notes(
     elif not accepted or accepted[0].number != start + 1:
         if accepted:
             warnings.append(f"첫 주석 번호가 {start + 1} 이 아님({accepted[0].number}) → 주석00_미분류 하나로 반환")
+            accs = [_NoteAcc(0, "미분류", "text")]
         else:
-            warnings.append("주석 제목을 하나도 찾지 못함 → 주석00_미분류 하나로 반환")
+            # 제목이 하나도 없는데 본문이 실질적으로 있으면(≥200자) 번호 없는 요약형으로 표시한다
+            # (실측 20260515001190 미래엔 분기: '1.1 회계정책의 변경' 하위 번호로만 구성)
+            text_total = sum(len(b.text) for b in blocks if b.kind == "p" and b.text and not b.is_section)
+            if text_total >= 200:
+                warnings.append("주석 번호 형식이 없어 하나의 시트로 출력")
+                accs = [_NoteAcc(0, NOTE_SUMMARY_TITLE, "text")]
+            else:
+                warnings.append("주석 제목을 하나도 찾지 못함 → 주석00_미분류 하나로 반환")
+                accs = [_NoteAcc(0, "미분류", "text")]
         accepted = []
-        accs = [_NoteAcc(0, "미분류", "text")]
     else:
         accs = [_NoteAcc(0, "미분류", "text")]  # 첫 제목 이전 블록 보관용 (뒤에서 첫 주석에 합침)
 

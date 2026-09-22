@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.hyperlink import Hyperlink
 from openpyxl.worksheet.worksheet import Worksheet
 
-from dart.models import Note, ParsedReport, Statement, Table
+from dart.models import NOTE_SUMMARY_TITLE, Note, ParsedReport, Statement, Table
 
 NUMBER_FORMAT = '#,##0;(#,##0);"-"'
 SHEET_NAME_MAX = 31
@@ -137,8 +137,20 @@ def _sheet_label(note: Note) -> str:
     return f"{int(m.group(1)):02d}{m.group(2)}" if m else lab
 
 
+def _is_summary_note(note: Note) -> bool:
+    """번호 없는 요약형 주석(:data:`NOTE_SUMMARY_TITLE`)인지."""
+    return note.number == 0 and note.title == NOTE_SUMMARY_TITLE
+
+
+def note_display_title(note: Note) -> str:
+    """목차·주석 시트 제목 행 표기. 요약형은 "주석(번호 없는 요약 형식)"."""
+    if _is_summary_note(note):
+        return "주석(번호 없는 요약 형식)"
+    return f"{note_label(note)}. {note.title}"
+
+
 def note_sheet_name(note: Note, scope_prefix: str = "") -> str:
-    """주석 시트명 ``{scope_prefix}주석{라벨}_{요약}`` 을 만든다.
+    """주석 시트명 ``{scope_prefix}주석{라벨}_{요약}`` 을 만든다. 요약형은 ``주석_요약``.
 
     요약은 제목에서 괄호와 그 내용(``(연결)``, ``(주1)``)·공백·특수문자를 제거한 것이며,
     31자 제한 안에서 최대 길이로 자른다 (번호는 항상 유지). 라벨은 :func:`_sheet_label`
@@ -151,6 +163,8 @@ def note_sheet_name(note: Note, scope_prefix: str = "") -> str:
     Returns:
         시트명 (금지문자 없음, 31자 이하).
     """
+    if _is_summary_note(note):
+        return f"{scope_prefix}주석_요약"
     prefix = f"{scope_prefix}주석{_sheet_label(note)}_"
     summary = _SHEET_SUMMARY_KEEP_RE.sub("", _SHEET_SUMMARY_DROP_RE.sub("", note.title))
     if not summary:  # 제목 전체가 괄호인 경우("(제목 미확인)") 괄호 안 내용을 살린다
@@ -346,7 +360,7 @@ def write_note_blocks(ws: Worksheet, note: Note, start_row: int, title_fill: Opt
         다음 행 번호.
     """
     row = start_row
-    title_cell = ws.cell(row=row, column=1, value=f"{note_label(note)}. {note.title}")
+    title_cell = ws.cell(row=row, column=1, value=note_display_title(note))
     title_cell.font = FONT_TITLE
     if title_fill is not None:
         for c in range(1, TITLE_FILL_COLS + 1):  # 제목 행 배경은 A~H 고정
@@ -570,7 +584,7 @@ def build_workbook(report: ParsedReport, split_note_sheets: bool = True) -> byte
         for note in sorted(notes_by_scope[scope], key=note_order):
             name = safe_sheet_name(note_sheet_name(note, prefixes.get(scope, "")), existing)
             write_note_sheet(wb, note, name)
-            entries.append((name, "주석", scope, f"{note_label(note)}. {note.title}", len(note.blocks)))
+            entries.append((name, "주석", scope, note_display_title(note), len(note.blocks)))
     for scope in scopes:
         prefix = prefixes.get(scope, "")
         name = safe_sheet_name(f"{prefix}주석_전체", existing)

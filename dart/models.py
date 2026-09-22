@@ -20,6 +20,10 @@ NoteBlockKind = Literal["paragraph", "table", "subheading"]
 # 표 셀 값: 숫자 파싱 성공 시 float, 빈 값이면 None, 파싱 불가면 원문 str.
 CellValue = Union[str, float, None]
 
+# 주석 번호 형식이 전혀 없는 요약형 주석(분기 요약 등)의 Note.title 값.
+# notes 가 만들고 excel 이 시트명 `주석_요약`·목차 "주석(번호 없는 요약 형식)" 으로 표시한다.
+NOTE_SUMMARY_TITLE = "번호 없는 요약 형식"
+
 
 @dataclass
 class DocNode:

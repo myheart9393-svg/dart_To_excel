@@ -42,6 +42,7 @@ _WARNING_RULES: list[tuple[str, str]] = [
     ("suffix", "F_STMT_DUP"),
     ("내용 기반 분류", "F_STMT_CONTENT"),
     ("주석00_미분류", "N_UNSORTED"),
+    ("주석 번호 형식이 없어", "N_UNSORTED"),
     ("제목을 찾지 못해", "N_INFERRED"),
     ("잘렸을 수 있음", "N_TRUNC"),
     ("개별 수신", "N_MISMATCH"),

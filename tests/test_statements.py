@@ -273,3 +273,14 @@ def test_total_row_chongja_real() -> None:
     warnings: list[str] = []
     extract_statements(_load_fx("fs_annual_chongja.html"), "별도", warnings)
     assert not any("파싱 오류 가능" in w or "검증 불가" in w for w in warnings)
+
+
+def test_dormant_body_table_relaxed() -> None:
+    """휴면회사(값이 거의 '-')의 border=1 본문표: 숫자 비율 미달이어도 추출된다 (실측 네오슈테른)."""
+    warnings: list[str] = []
+    statements = extract_statements(_load_fx("fs_annual_dormant.html"), "별도", warnings)
+    kinds = {s.kind for s in statements}
+    assert kinds == {"재무상태표", "손익계산서"}
+    bs = next(s for s in statements if s.kind == "재무상태표")
+    vals = [v for r in bs.table.rows for v in r[1:]]
+    assert sum(1 for v in vals if v is None) > len(vals) / 2  # 휴면회사: 값 대부분 빈 값

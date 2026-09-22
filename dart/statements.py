@@ -98,11 +98,18 @@ def _table_shape(table: Tag) -> tuple[int, int, float]:
 
 
 def _is_body_table(table: Tag) -> bool:
-    """본문표 판정: <thead> 가 있거나, (class="nb" 가 아니면서) 열 ≥ 3 이고 숫자 셀 20% 이상."""
+    """본문표 판정: <thead> 가 있거나, nb 가 아니면서 (border 가 0 아닌 값이거나 열 ≥ 3·숫자 셀 20% 이상).
+
+    border 조건은 값이 거의 전부 ``-`` 인 휴면회사 재무제표(<thead> 없음, 숫자 비율 미달,
+    실측 20260331000492 네오슈테른) 대응 — 종류 판정은 기존 규칙(제목/내용)이 그대로 걸러준다.
+    """
     if count_thead_rows(table) > 0:
         return True
     if "nb" in (table.get("class") or []):
         return False
+    border = str(table.get("border") or "").strip()
+    if border and border != "0":
+        return True
     _, ncols, ratio = _table_shape(table)
     return ncols >= BODY_MIN_COLS and ratio >= BODY_NUMERIC_RATIO
 
@@ -138,7 +145,9 @@ def _kind_from_content(table: Table) -> Optional[StatementKind]:
     header = "".join(_compact(c) for hr in table.header_rows for c in hr)
     if "자산총계" in names and "부채총계" in names:
         return "재무상태표"
-    if "자본금" in header and ("이익잉여금" in header or "결손금" in header):
+    # 자본변동표 헤더 동반 항목 (실측 20260331004229 수양켐텍: 자본금+기타포괄+총계, 잉여금 없음)
+    equity_cols = ("자본잉여금", "이익잉여금", "결손금", "기타자본", "기타포괄", "비지배지분", "총계", "합계")
+    if "자본금" in header and any(k in header for k in equity_cols):
         return "자본변동표"
     if "영업활동" in names and "현금흐름" in names:
         return "현금흐름표"

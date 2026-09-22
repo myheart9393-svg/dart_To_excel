@@ -194,3 +194,21 @@ def test_balance_fallback_xbrl_real() -> None:
     kinds = {s.kind for s in statements}
     assert "재무상태표" in kinds and len(statements) == 4
     assert not any("대차 검증 불가" in w or "파싱 오류 가능" in w for w in warnings)
+
+
+def test_summary_note_display() -> None:
+    """번호 없는 요약 주석(미래엔 분기): 시트명 주석_요약, 목차 "주석(번호 없는 요약 형식)"."""
+    from dart.excel import note_display_title
+    from dart.models import NOTE_SUMMARY_TITLE
+
+    warnings: list[str] = []
+    notes = split_notes(_load("notes_quarter_summary.html"), "별도", warnings)
+    assert len(notes) == 1 and notes[0].number == 0 and notes[0].title == NOTE_SUMMARY_TITLE
+    assert any("주석 번호 형식이 없어 하나의 시트로 출력" in w for w in warnings)
+    assert note_sheet_name(notes[0], "별도") == "별도주석_요약"
+    assert note_display_title(notes[0]) == "주석(번호 없는 요약 형식)"
+    # 본문이 짧으면(<200자) 기존 미분류 그대로
+    w2: list[str] = []
+    notes2 = split_notes("<html><body><p>서문입니다</p></body></html>", "단일", w2)
+    assert notes2[0].title == "미분류"
+    assert any("주석00_미분류" in w for w in w2)
