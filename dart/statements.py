@@ -114,6 +114,27 @@ def _is_body_table(table: Tag) -> bool:
     return ncols >= BODY_MIN_COLS and ratio >= BODY_NUMERIC_RATIO
 
 
+def _is_titleish_table(table: Tag) -> bool:
+    """본문표 후보지만 실제로는 기간·단위 문구만 담은 1열 제목표인지.
+
+    제목표에도 ``border="1"`` 을 쓰는 문서(실측 20260331004229 수양켐텍) 대응: 모든 행이 1열
+    이하이고 비어 있지 않은 셀 텍스트가 전부 기간 패턴(제N기·부터·까지·현재·날짜) 또는 단위
+    문구이면 제목표로 취급해 ctx 에 넣는다 (기간·단위는 다음 본문표가 흡수).
+    """
+    texts: list[str] = []
+    for tr in [tr for tr in table.find_all("tr") if tr.find_parent("table") is table]:
+        cells = [c for c in tr.find_all(["td", "th"]) if c.find_parent("tr") is tr]
+        if len(cells) > 1:
+            return False
+        for c in cells:
+            t = _clean(c.get_text(" "))
+            if t:
+                texts.append(t)
+    if not texts:
+        return False
+    return all(_PERIOD_RE.search(t) or "단위" in t for t in texts)
+
+
 def _table_cell_texts(table: Tag) -> list[str]:
     """제목표의 셀 텍스트를 문서 순서대로 (연속 중복 제거, 빈 셀 제외)."""
     out: list[str] = []
@@ -406,7 +427,7 @@ def extract_statements(html: str, scope: Scope, warnings: list[str]) -> list[Sta
                 ctx.append(text)
             continue
 
-        if not _is_body_table(block):
+        if not _is_body_table(block) or _is_titleish_table(block):
             ctx.extend(_table_cell_texts(block))
             continue
 

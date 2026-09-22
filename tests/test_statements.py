@@ -284,3 +284,14 @@ def test_dormant_body_table_relaxed() -> None:
     bs = next(s for s in statements if s.kind == "재무상태표")
     vals = [v for r in bs.table.rows for v in r[1:]]
     assert sum(1 for v in vals if v is None) > len(vals) / 2  # 휴면회사: 값 대부분 빈 값
+
+
+def test_titleish_border_table_absorbed() -> None:
+    """border=1 제목표(기간·단위 1열)는 ctx 로 흡수 — 자본변동표가 suffix 없이 1개 (실측 수양켄텍)."""
+    warnings: list[str] = []
+    statements = extract_statements(_load_fx("fs_annual_titleish.html"), "별도", warnings)
+    scs = [s for s in statements if s.kind == "자본변동표"]
+    assert len(scs) == 1 and scs[0].suffix == ""
+    assert len(scs[0].table.rows) == 9 and len(scs[0].table.header_rows) == 2
+    assert "제 23기" in (scs[0].period_text or "") and "부터" in scs[0].period_text
+    assert not any("suffix" in w for w in warnings)  # F_STMT_DUP 소멸
